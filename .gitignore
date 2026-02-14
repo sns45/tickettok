@@ -1,0 +1,21 @@
+# Binary
+tickettok
+
+# Claude Code local instructions
+CLAUDE.md
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Go
+vendor/
+
+# TicketTok state (user-specific)
