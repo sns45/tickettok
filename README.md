@@ -24,13 +24,32 @@ Built with [Go](https://go.dev), [Bubble Tea](https://github.com/charmbracelet/b
 
 - **tmux** — `brew install tmux`
 - **Claude CLI** — `npm install -g @anthropic-ai/claude-code`
-- **Go 1.25+** — `brew install go`
 
 ## Install
 
+**Homebrew** (macOS/Linux):
 ```bash
+brew install sns45/tap/tickettok
+```
+
+**Go install** (requires Go 1.21+):
+```bash
+go install github.com/sns45/tickettok@latest
+```
+
+**Shell script** (macOS/Linux):
+```bash
+curl -sSfL https://raw.githubusercontent.com/sns45/tickettok/main/install.sh | sh
+```
+
+**From source**:
+```bash
+git clone https://github.com/sns45/tickettok.git
+cd tickettok
 go build -o tickettok .
 ```
+
+**Binary download**: grab a release from [GitHub Releases](https://github.com/sns45/tickettok/releases).
 
 ## Usage
 

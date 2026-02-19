@@ -11,6 +11,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+var version = "dev"
+
 func main() {
 	checkDeps()
 	ensureHooksInstalled()
@@ -33,6 +35,8 @@ func main() {
 		cmdDiscover()
 	case "clear":
 		cmdClear()
+	case "version", "--version", "-v":
+		fmt.Println("tickettok " + version)
 	case "help", "--help", "-h":
 		printUsage()
 	default:
