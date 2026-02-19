@@ -97,13 +97,13 @@ var (
 func StatusBadge(status string) string {
 	switch status {
 	case "RUNNING":
-		return BadgeRunning.Render("RUNNING")
+		return BadgeRunning.Render("IN-PROGRESS")
 	case "WAITING":
 		return BadgeWaiting.Render("WAITING")
 	case "IDLE":
 		return BadgeIdle.Render("IDLE")
 	case "DONE":
-		return BadgeDone.Render("COMPLETED")
+		return BadgeDone.Render("DONE")
 	default:
 		return BadgeDone.Render(status)
 	}

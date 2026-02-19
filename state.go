@@ -26,7 +26,6 @@ type Agent struct {
 	CreatedAt   time.Time   `json:"created_at"`
 	StatusSince time.Time   `json:"status_since"`
 	SessionName string      `json:"session_name,omitempty"`
-	Prompt      string      `json:"prompt,omitempty"`
 }
 
 type StateFile struct {
@@ -99,7 +98,7 @@ func (s *Store) save() error {
 	return os.WriteFile(s.path, data, 0644)
 }
 
-func (s *Store) Add(name, dir, prompt string) *Agent {
+func (s *Store) Add(name, dir string) *Agent {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -111,7 +110,6 @@ func (s *Store) Add(name, dir, prompt string) *Agent {
 		Status:      StatusRunning,
 		CreatedAt:   now,
 		StatusSince: now,
-		Prompt:      prompt,
 	}
 	s.nextID++
 	s.agents = append(s.agents, a)

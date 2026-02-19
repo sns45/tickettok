@@ -3,7 +3,6 @@ package main
 import (
 	"strings"
 	"sync"
-	"time"
 )
 
 // AgentManager tracks tmux sessions for all agents.
@@ -35,14 +34,6 @@ func (m *AgentManager) SpawnAgent(agent *Agent) error {
 
 	// Store session name in agent state
 	agent.SessionName = sessName
-
-	// If there's a prompt, send it to Claude's interactive input after startup.
-	if agent.Prompt != "" {
-		go func() {
-			time.Sleep(4 * time.Second) // wait for Claude's Ink UI to be ready
-			sess.SendKeys(agent.Prompt)
-		}()
-	}
 
 	return nil
 }
@@ -94,8 +85,14 @@ func (m *AgentManager) GetSession(agent *Agent) *TmuxSession {
 	return nil
 }
 
-// DetectStatus captures tmux pane content and determines agent status.
+// DetectStatus checks hook-based status first, then falls back to capture-pane scraping.
 func (m *AgentManager) DetectStatus(agent *Agent) AgentStatus {
+	// Try hook-based status first (fast, no subprocess)
+	if status, ok := readHookStatus(agent.ID); ok {
+		return status
+	}
+
+	// Fall back to capture-pane scraping
 	sess := m.GetSession(agent)
 	if sess == nil || !sess.IsAlive() {
 		return StatusDone

@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -108,6 +109,22 @@ func (t *TmuxSession) SetSize(cols, rows int) error {
 	return exec.Command("tmux", "resize-window", "-t", t.Name, "-x", fmt.Sprintf("%d", cols), "-y", fmt.Sprintf("%d", rows)).Run()
 }
 
+// deriveNameFromDir returns a short agent name based on the git repo or directory basename.
+func deriveNameFromDir(dir string) string {
+	// Try git repo root name
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output()
+	if err == nil {
+		if name := filepath.Base(strings.TrimSpace(string(out))); name != "" && name != "." {
+			return name
+		}
+	}
+	// Fall back to directory basename
+	if name := filepath.Base(dir); name != "" && name != "." && name != "/" {
+		return name
+	}
+	return "agent"
+}
+
 // --- Discovery ---
 
 // DiscoveredAgent represents a claude instance found via tmux or process scan.
@@ -127,46 +144,82 @@ func stripAnsiStr(s string) string {
 }
 
 // DetectStatusFromContent determines agent status from tmux pane content.
+// Scans the last 15 non-blank lines for reliable detection.
+// Priority: RUNNING > WAITING > IDLE > DONE > default RUNNING.
 func DetectStatusFromContent(content string) AgentStatus {
 	lines := strings.Split(content, "\n")
 
-	// Check from bottom up, skip blank lines
-	for i := len(lines) - 1; i >= 0; i-- {
+	// Collect last 15 non-blank lines (bottom-up)
+	var recent []string
+	for i := len(lines) - 1; i >= 0 && len(recent) < 15; i-- {
 		line := strings.TrimSpace(stripAnsiStr(lines[i]))
-		if line == "" {
-			continue
+		if line != "" {
+			recent = append(recent, line)
 		}
+	}
 
+	if len(recent) == 0 {
+		return StatusRunning
+	}
+
+	// RUNNING = actively processing (check first — most specific signals)
+	// "esc to interrupt" only appears when Claude is actively executing.
+	// "✻ <verb>..." is the animated spinner (e.g. "✻ Cannoodling... (1m · ↓ 20 tokens)").
+	for _, line := range recent {
 		lower := strings.ToLower(line)
+		if strings.Contains(lower, "esc to interrupt") {
+			return StatusRunning
+		}
+		// Active spinner: ✻ followed by text ending with "..."
+		if strings.Contains(line, "✻") && strings.Contains(line, "...") {
+			return StatusRunning
+		}
+	}
 
-		// WAITING: permission prompts
-		for _, p := range []string{"allow", "permission", "approve", "y/n", "yes/no", "accept", "deny", "confirm"} {
+	// WAITING = permission prompts and interactive TUI selectors
+	for _, line := range recent {
+		lower := strings.ToLower(line)
+		for _, p := range []string{
+			"allow once", "allow always",
+			"enter to select", "space to select",
+			"yes/no/always allow",
+			"do you want to proceed",
+			"shall i proceed", "should i proceed",
+			"approve", "deny", "reject",
+			"(y)es", "(n)o", "y/n", "yes/no",
+			"ctrl+g to edit",
+		} {
 			if strings.Contains(lower, p) {
 				return StatusWaiting
 			}
 		}
-
-		// IDLE: at a prompt
-		if line == ">" || line == "$" || strings.HasSuffix(line, "> ") || strings.HasSuffix(line, "$ ") || strings.Contains(line, "❯") {
-			return StatusIdle
-		}
-
-		// RUNNING: actively processing
-		if strings.Contains(lower, "esc to interrupt") {
-			return StatusRunning
-		}
-
-		// DONE: session ended
-		for _, p := range []string{"exited", "goodbye", "session ended", "bye"} {
-			if strings.Contains(lower, p) {
-				return StatusDone
-			}
-		}
-
-		// Non-empty line that didn't match — assume running
-		return StatusRunning
 	}
 
+	// IDLE = at the prompt, waiting for next input
+	for _, line := range recent {
+		lower := strings.ToLower(line)
+		if line == ">" || line == "$" ||
+			strings.HasSuffix(line, "> ") ||
+			strings.HasSuffix(line, "$ ") ||
+			strings.Contains(line, "❯") ||
+			strings.Contains(lower, "? for shortcuts") ||
+			strings.Contains(lower, "has completed") ||
+			strings.Contains(lower, "anything else") ||
+			strings.Contains(lower, "can i help") {
+			return StatusIdle
+		}
+	}
+
+	// DONE = session ended
+	bottom := recent[0]
+	bottomLower := strings.ToLower(bottom)
+	for _, p := range []string{"exited", "goodbye", "session ended", "bye"} {
+		if strings.Contains(bottomLower, p) {
+			return StatusDone
+		}
+	}
+
+	// Default: assume running (active output)
 	return StatusRunning
 }
 

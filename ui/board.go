@@ -10,63 +10,59 @@ import (
 // RenderBoard renders the kanban board in 2 or 3 column mode.
 func RenderBoard(agents []CardData, selected int, columns int, width, height int) string {
 	// Categorize agents
-	var running, idle, done []CardData
-	var runIdx, idleIdx, doneIdx []int
+	var running, waiting, idle []CardData
+	var runIdx, waitIdx, idleIdx []int
 
 	for i, a := range agents {
 		switch a.Status {
-		case "RUNNING", "WAITING":
+		case "RUNNING":
 			running = append(running, a)
 			runIdx = append(runIdx, i)
-		case "IDLE":
+		case "WAITING":
+			waiting = append(waiting, a)
+			waitIdx = append(waitIdx, i)
+		case "IDLE", "DONE":
 			idle = append(idle, a)
 			idleIdx = append(idleIdx, i)
-		case "DONE":
-			done = append(done, a)
-			doneIdx = append(doneIdx, i)
 		}
 	}
 
 	if columns == 2 {
-		return render2Col(agents, running, idle, done, runIdx, idleIdx, doneIdx, selected, width, height)
+		return render2Col(agents, running, waiting, idle, runIdx, waitIdx, idleIdx, selected, width, height)
 	}
-	return render3Col(agents, running, idle, done, runIdx, idleIdx, doneIdx, selected, width, height)
+	return render3Col(agents, running, waiting, idle, runIdx, waitIdx, idleIdx, selected, width, height)
 }
 
-func render3Col(agents []CardData, running, idle, done []CardData, runIdx, idleIdx, doneIdx []int, selected, width, height int) string {
+func render3Col(agents []CardData, running, waiting, idle []CardData, runIdx, waitIdx, idleIdx []int, selected, width, height int) string {
 	colWidth := (width - 6) / 3
 	if colWidth < 20 {
 		colWidth = 20
 	}
 
 	// Headers
-	rc := len(running)
-	ic := len(idle)
-	dc := len(done)
-
-	hdrRun := ColumnHeader.Foreground(ColorRunning).Render(fmt.Sprintf("■ RUNNING [%d]", rc))
-	hdrIdle := ColumnHeader.Foreground(ColorIdle).Render(fmt.Sprintf("■ IDLE [%d]", ic))
-	hdrDone := ColumnHeader.Foreground(ColorDone).Render(fmt.Sprintf("■ COMPLETED [%d]", dc))
+	hdrRun := ColumnHeader.Foreground(ColorRunning).Render(fmt.Sprintf("■ RUNNING [%d]", len(running)))
+	hdrWait := ColumnHeader.Foreground(ColorWaiting).Render(fmt.Sprintf("■ WAITING [%d]", len(waiting)))
+	hdrIdle := ColumnHeader.Foreground(ColorIdle).Render(fmt.Sprintf("■ IDLE [%d]", len(idle)))
 
 	hdrRun = lipgloss.NewStyle().Width(colWidth).Render(hdrRun)
+	hdrWait = lipgloss.NewStyle().Width(colWidth).Render(hdrWait)
 	hdrIdle = lipgloss.NewStyle().Width(colWidth).Render(hdrIdle)
-	hdrDone = lipgloss.NewStyle().Width(colWidth).Render(hdrDone)
 
-	header := lipgloss.JoinHorizontal(lipgloss.Top, hdrRun, " ", hdrIdle, " ", hdrDone)
+	header := lipgloss.JoinHorizontal(lipgloss.Top, hdrIdle, " ", hdrWait, " ", hdrRun)
 
 	// Cards per column
-	col1 := renderColumnCards(running, runIdx, selected, colWidth)
-	col2 := renderColumnCards(idle, idleIdx, selected, colWidth)
-	col3 := renderColumnCards(done, doneIdx, selected, colWidth)
+	col1 := renderColumnCards(idle, idleIdx, selected, colWidth)
+	col2 := renderColumnCards(waiting, waitIdx, selected, colWidth)
+	col3 := renderColumnCards(running, runIdx, selected, colWidth)
 
-	if len(running) == 0 {
-		col1 = lipgloss.NewStyle().Width(colWidth).Foreground(ColorDim).Render("\n  No running agents")
-	}
 	if len(idle) == 0 {
-		col2 = lipgloss.NewStyle().Width(colWidth).Foreground(ColorDim).Render("\n  No idle agents")
+		col1 = lipgloss.NewStyle().Width(colWidth).Foreground(ColorDim).Render("\n  No idle agents")
 	}
-	if len(done) == 0 {
-		col3 = lipgloss.NewStyle().Width(colWidth).Foreground(ColorDim).Render("\n  No completed agents")
+	if len(waiting) == 0 {
+		col2 = lipgloss.NewStyle().Width(colWidth).Foreground(ColorDim).Render("\n  No waiting agents")
+	}
+	if len(running) == 0 {
+		col3 = lipgloss.NewStyle().Width(colWidth).Foreground(ColorDim).Render("\n  No running agents")
 	}
 
 	body := lipgloss.JoinHorizontal(lipgloss.Top, col1, " ", col2, " ", col3)
@@ -74,39 +70,36 @@ func render3Col(agents []CardData, running, idle, done []CardData, runIdx, idleI
 	return lipgloss.JoinVertical(lipgloss.Left, header, body)
 }
 
-func render2Col(agents []CardData, running, idle, done []CardData, runIdx, idleIdx, doneIdx []int, selected, width, height int) string {
+func render2Col(agents []CardData, running, waiting, idle []CardData, runIdx, waitIdx, idleIdx []int, selected, width, height int) string {
 	colWidth := (width - 4) / 2
 	if colWidth < 25 {
 		colWidth = 25
 	}
 
-	// Active = running + idle
+	// Active = running + waiting
 	var active []CardData
 	var activeIdx []int
 	active = append(active, running...)
 	activeIdx = append(activeIdx, runIdx...)
-	active = append(active, idle...)
-	activeIdx = append(activeIdx, idleIdx...)
+	active = append(active, waiting...)
+	activeIdx = append(activeIdx, waitIdx...)
 
-	ac := len(active)
-	dc := len(done)
-
-	hdrActive := ColumnHeader.Foreground(ColorAccent).Render(fmt.Sprintf("■ ACTIVE [%d]", ac))
-	hdrDone := ColumnHeader.Foreground(ColorDone).Render(fmt.Sprintf("■ COMPLETED [%d]", dc))
+	hdrActive := ColumnHeader.Foreground(ColorAccent).Render(fmt.Sprintf("■ ACTIVE [%d]", len(active)))
+	hdrIdle := ColumnHeader.Foreground(ColorIdle).Render(fmt.Sprintf("■ IDLE [%d]", len(idle)))
 
 	hdrActive = lipgloss.NewStyle().Width(colWidth).Render(hdrActive)
-	hdrDone = lipgloss.NewStyle().Width(colWidth).Render(hdrDone)
+	hdrIdle = lipgloss.NewStyle().Width(colWidth).Render(hdrIdle)
 
-	header := lipgloss.JoinHorizontal(lipgloss.Top, hdrActive, " ", hdrDone)
+	header := lipgloss.JoinHorizontal(lipgloss.Top, hdrIdle, " ", hdrActive)
 
-	col1 := renderColumnCards(active, activeIdx, selected, colWidth)
-	col2 := renderColumnCards(done, doneIdx, selected, colWidth)
+	col1 := renderColumnCards(idle, idleIdx, selected, colWidth)
+	col2 := renderColumnCards(active, activeIdx, selected, colWidth)
 
-	if len(active) == 0 {
-		col1 = lipgloss.NewStyle().Width(colWidth).Foreground(ColorDim).Render("\n  No active agents")
+	if len(idle) == 0 {
+		col1 = lipgloss.NewStyle().Width(colWidth).Foreground(ColorDim).Render("\n  No idle agents")
 	}
-	if len(done) == 0 {
-		col2 = lipgloss.NewStyle().Width(colWidth).Foreground(ColorDim).Render("\n  No completed agents")
+	if len(active) == 0 {
+		col2 = lipgloss.NewStyle().Width(colWidth).Foreground(ColorDim).Render("\n  No active agents")
 	}
 
 	body := lipgloss.JoinHorizontal(lipgloss.Top, col1, " ", col2)

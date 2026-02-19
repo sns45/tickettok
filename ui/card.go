@@ -149,13 +149,13 @@ func statusTimeLine(status string, uptime, since time.Duration) string {
 	dur := formatDuration(since)
 	switch status {
 	case "RUNNING":
-		return lipgloss.NewStyle().Foreground(ColorRunning).Render("RUNNING: " + dur)
+		return lipgloss.NewStyle().Foreground(ColorRunning).Render("IN-PROGRESS: " + dur)
 	case "WAITING":
 		return lipgloss.NewStyle().Foreground(ColorWaiting).Bold(true).Render("WAITING: " + dur)
 	case "IDLE":
-		return lipgloss.NewStyle().Foreground(ColorIdle).Render("IDLE FOR: " + dur)
+		return lipgloss.NewStyle().Foreground(ColorIdle).Render("IDLE: " + dur)
 	case "DONE":
-		return DimText.Render("COMPLETED: " + dur + " ago")
+		return DimText.Render("DONE: " + dur + " ago")
 	default:
 		return DimText.Render("UPTIME: " + formatDuration(uptime))
 	}

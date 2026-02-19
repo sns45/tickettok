@@ -45,10 +45,7 @@ type Model struct {
 	height   int
 
 	// Spawn dialog fields
-	spawnName   textinput.Model
-	spawnDir    textinput.Model
-	spawnPrompt textinput.Model
-	spawnField  int // 0=name, 1=dir, 2=prompt
+	spawnDir textinput.Model
 
 	// Send dialog
 	sendInput textinput.Model
@@ -67,20 +64,10 @@ type Model struct {
 }
 
 func initialModel(store *Store, manager *AgentManager) Model {
-	nameInput := textinput.New()
-	nameInput.Placeholder = "agent-name"
-	nameInput.CharLimit = 40
-	nameInput.Width = 40
-
 	dirInput := textinput.New()
 	dirInput.Placeholder = "~/dev/project"
 	dirInput.CharLimit = 200
 	dirInput.Width = 60
-
-	promptInput := textinput.New()
-	promptInput.Placeholder = "task description for the agent"
-	promptInput.CharLimit = 500
-	promptInput.Width = 60
 
 	sendInput := textinput.New()
 	sendInput.Placeholder = "message to send to agent"
@@ -88,17 +75,15 @@ func initialModel(store *Store, manager *AgentManager) Model {
 	sendInput.Width = 60
 
 	return Model{
-		store:       store,
-		manager:     manager,
-		agents:      store.List(),
-		columns:     3,
-		view:        viewBoard,
-		width:       120,
-		height:      40,
-		spawnName:   nameInput,
-		spawnDir:    dirInput,
-		spawnPrompt: promptInput,
-		sendInput:   sendInput,
+		store:    store,
+		manager:  manager,
+		agents:   store.List(),
+		columns:  3,
+		view:     viewBoard,
+		width:    120,
+		height:   40,
+		spawnDir: dirInput,
+		sendInput: sendInput,
 	}
 }
 
@@ -381,23 +366,11 @@ func (m *Model) handleSpawnKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.view = viewCarousel
 		}
 		return m, nil
-	case "tab":
-		m.spawnField = (m.spawnField + 1) % 3
-		m.focusSpawnField()
-		return m, nil
-	case "shift+tab":
-		m.spawnField = (m.spawnField + 2) % 3
-		m.focusSpawnField()
-		return m, nil
 	case "enter":
-		if m.spawnField < 2 {
-			m.spawnField++
-			m.focusSpawnField()
-			return m, nil
-		}
 		return m.doSpawn()
 	}
-	cmd := m.updateSpawnInputs(msg)
+	var cmd tea.Cmd
+	m.spawnDir, cmd = m.spawnDir.Update(msg)
 	return m, cmd
 }
 
@@ -450,25 +423,8 @@ func (m *Model) handleConfirmKill(key string) (tea.Model, tea.Cmd) {
 
 func (m *Model) openSpawnDialog() {
 	m.view = viewSpawn
-	m.spawnField = 0
-	m.spawnName.SetValue("")
 	m.spawnDir.SetValue("")
-	m.spawnPrompt.SetValue("")
-	m.focusSpawnField()
-}
-
-func (m *Model) focusSpawnField() {
-	m.spawnName.Blur()
-	m.spawnDir.Blur()
-	m.spawnPrompt.Blur()
-	switch m.spawnField {
-	case 0:
-		m.spawnName.Focus()
-	case 1:
-		m.spawnDir.Focus()
-	case 2:
-		m.spawnPrompt.Focus()
-	}
+	m.spawnDir.Focus()
 }
 
 func (m *Model) openSendDialog() {
@@ -481,13 +437,8 @@ func (m *Model) openSendDialog() {
 }
 
 func (m *Model) doSpawn() (tea.Model, tea.Cmd) {
-	name := strings.TrimSpace(m.spawnName.Value())
 	dir := strings.TrimSpace(m.spawnDir.Value())
-	prompt := strings.TrimSpace(m.spawnPrompt.Value())
 
-	if name == "" {
-		name = fmt.Sprintf("agent-%d", len(m.agents)+1)
-	}
 	if dir == "" {
 		dir, _ = os.Getwd()
 	}
@@ -496,7 +447,9 @@ func (m *Model) doSpawn() (tea.Model, tea.Cmd) {
 		dir = filepath.Join(home, dir[2:])
 	}
 
-	agent := m.store.Add(name, dir, prompt)
+	name := deriveNameFromDir(dir)
+
+	agent := m.store.Add(name, dir)
 	if err := m.manager.SpawnAgent(agent); err != nil {
 		m.setStatus(fmt.Sprintf("Spawn error: %v", err))
 	} else {
@@ -588,11 +541,18 @@ func (m *Model) killSelected() {
 		_ = KillBySession(agent.SessionName)
 	}
 
-	m.store.Update(agent.ID, StatusDone)
+	// Clean up hook status file
+	cleanHookStatus(agent.ID)
+
+	// Remove from store entirely (not just mark DONE)
+	m.store.Remove(agent.ID)
 	m.agents = m.store.List()
 	m.setStatus(fmt.Sprintf("Killed: %s", agent.Name))
 	if m.selected >= len(m.agents) && len(m.agents) > 0 {
 		m.selected = len(m.agents) - 1
+	}
+	if len(m.agents) == 0 {
+		m.selected = 0
 	}
 }
 
@@ -623,7 +583,8 @@ func (m *Model) discoverAgents() {
 		if existing {
 			continue
 		}
-		agent := m.store.Add(d.Name, d.Dir, "")
+		name := deriveNameFromDir(d.Dir)
+		agent := m.store.Add(name, d.Dir)
 		agent.SessionName = d.SessionName
 		m.store.UpdateSessionName(agent.ID, d.SessionName)
 		added++
@@ -639,14 +600,7 @@ func (m *Model) setStatus(msg string) {
 
 func (m *Model) updateSpawnInputs(msg tea.Msg) tea.Cmd {
 	var cmd tea.Cmd
-	switch m.spawnField {
-	case 0:
-		m.spawnName, cmd = m.spawnName.Update(msg)
-	case 1:
-		m.spawnDir, cmd = m.spawnDir.Update(msg)
-	case 2:
-		m.spawnPrompt, cmd = m.spawnPrompt.Update(msg)
-	}
+	m.spawnDir, cmd = m.spawnDir.Update(msg)
 	return cmd
 }
 
@@ -775,12 +729,10 @@ func (m Model) viewSpawn() string {
 	title := ui.AgentName.Render("Spawn New Agent")
 
 	fields := lipgloss.JoinVertical(lipgloss.Left,
-		"Name:", m.spawnName.View(),
-		"", "Directory:", m.spawnDir.View(),
-		"", "Prompt:", m.spawnPrompt.View(),
+		"Directory:", m.spawnDir.View(),
 	)
 
-	help := ui.HelpStyle.Render("[Tab] next field  [Enter] spawn  [Esc] cancel")
+	help := ui.HelpStyle.Render("[Enter] spawn  [Esc] cancel")
 
 	content := lipgloss.JoinVertical(lipgloss.Left, title, "", fields, "", help)
 

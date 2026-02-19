@@ -13,6 +13,7 @@ import (
 
 func main() {
 	checkDeps()
+	ensureHooksInstalled()
 
 	if len(os.Args) < 2 {
 		runTUI()
@@ -83,16 +84,15 @@ func runTUI() {
 
 // cmdAdd spawns an agent headlessly from CLI.
 func cmdAdd() {
-	if len(os.Args) < 4 {
-		fmt.Fprintln(os.Stderr, "Usage: tickettok add <dir> \"<prompt>\" [--name <name>]")
+	if len(os.Args) < 3 {
+		fmt.Fprintln(os.Stderr, "Usage: tickettok add <dir> [--name <name>]")
 		os.Exit(1)
 	}
 
 	dir := os.Args[2]
-	prompt := os.Args[3]
 	name := ""
 
-	for i := 4; i < len(os.Args)-1; i++ {
+	for i := 3; i < len(os.Args)-1; i++ {
 		if os.Args[i] == "--name" {
 			name = os.Args[i+1]
 		}
@@ -112,11 +112,10 @@ func cmdAdd() {
 	manager := NewAgentManager()
 
 	if name == "" {
-		agents := store.List()
-		name = fmt.Sprintf("agent-%d", len(agents)+1)
+		name = deriveNameFromDir(dir)
 	}
 
-	agent := store.Add(name, dir, prompt)
+	agent := store.Add(name, dir)
 	if err := manager.SpawnAgent(agent); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to spawn agent: %v\n", err)
 		os.Exit(1)
@@ -219,7 +218,7 @@ func printUsage() {
 Usage:
   tickettok              Launch the TUI dashboard
   tickettok start        Launch the TUI dashboard
-  tickettok add <dir> "<prompt>" [--name <name>]
+  tickettok add <dir> [--name <name>]
                          Spawn an agent headlessly
   tickettok list         List all agents
   tickettok kill <name>  Kill an agent by name or ID
