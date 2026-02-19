@@ -14,6 +14,7 @@ type CardData struct {
 	Name     string
 	Dir      string
 	Status   string
+	Mode     string
 	Uptime   time.Duration
 	Since    time.Duration
 	Preview  []string
@@ -31,6 +32,10 @@ func RenderCard(d CardData, width int) string {
 	badge := StatusBadge(d.Status)
 	name := AgentName.Render(d.Name)
 	header := lipgloss.JoinHorizontal(lipgloss.Top, name, "  ", badge)
+	if d.Mode != "" {
+		modeTag := ModeBadgeFor(d.Mode)
+		header = lipgloss.JoinHorizontal(lipgloss.Top, name, "  ", badge, " ", modeTag)
+	}
 
 	// Project dir (shortened)
 	dir := shortenDir(d.Dir)
@@ -50,7 +55,7 @@ func RenderCard(d CardData, width int) string {
 	var previewStr string
 	if len(d.Preview) > 0 {
 		lines := d.Preview
-		maxLines := 1
+		maxLines := 10
 		if len(lines) > maxLines {
 			lines = lines[len(lines)-maxLines:]
 		}
@@ -82,6 +87,10 @@ func RenderCarouselCard(d CardData, width int, previewLines int) string {
 	badge := StatusBadge(d.Status)
 	name := AgentName.Render(d.Name)
 	header := lipgloss.JoinHorizontal(lipgloss.Top, name, "  ", badge)
+	if d.Mode != "" {
+		modeTag := ModeBadgeFor(d.Mode)
+		header = lipgloss.JoinHorizontal(lipgloss.Top, name, "  ", badge, " ", modeTag)
+	}
 
 	dir := shortenDir(d.Dir)
 	dirLine := DimText.Render("PROJECT: " + dir)

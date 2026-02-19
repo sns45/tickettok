@@ -143,6 +143,17 @@ func stripAnsiStr(s string) string {
 	return ansiRe.ReplaceAllString(s, "")
 }
 
+// hasDingbat returns true if the string contains a Unicode Dingbat character (U+2700-U+27BF).
+// Claude Code uses rotating dingbats (✢, ✶, ✻, etc.) for its spinner animation.
+func hasDingbat(s string) bool {
+	for _, r := range s {
+		if r >= '\u2700' && r <= '\u27BF' {
+			return true
+		}
+	}
+	return false
+}
+
 // DetectStatusFromContent determines agent status from tmux pane content.
 // Scans the last 15 non-blank lines for reliable detection.
 // Priority: RUNNING > WAITING > IDLE > DONE > default RUNNING.
@@ -163,15 +174,20 @@ func DetectStatusFromContent(content string) AgentStatus {
 	}
 
 	// RUNNING = actively processing (check first — most specific signals)
-	// "esc to interrupt" only appears when Claude is actively executing.
-	// "✻ <verb>..." is the animated spinner (e.g. "✻ Cannoodling... (1m · ↓ 20 tokens)").
+	// "esc to interrupt" appears at the bottom while Claude is executing.
+	// "Running…" appears next to tool output while a tool is in progress.
+	// Spinner uses rotating Unicode dingbats (U+2700–U+27BF): ✢, ✶, ✻, etc.
 	for _, line := range recent {
 		lower := strings.ToLower(line)
 		if strings.Contains(lower, "esc to interrupt") {
 			return StatusRunning
 		}
-		// Active spinner: ✻ followed by text ending with "..."
-		if strings.Contains(line, "✻") && strings.Contains(line, "...") {
+		if strings.Contains(lower, "running…") || strings.Contains(lower, "running...") {
+			return StatusRunning
+		}
+		// Active spinner: any Unicode dingbat (U+2700-U+27BF) + ellipsis
+		hasEllipsis := strings.Contains(line, "…") || strings.Contains(line, "...")
+		if hasEllipsis && hasDingbat(line) {
 			return StatusRunning
 		}
 	}
@@ -223,9 +239,17 @@ func DetectStatusFromContent(content string) AgentStatus {
 	return StatusRunning
 }
 
-// PreviewFromContent extracts the last n meaningful lines from pane content.
-func PreviewFromContent(content string, n int) []string {
+// PreviewFromContent extracts the last n meaningful lines from pane content,
+// stripping bottom chrome (separator, prompt, state line) first.
+// When waiting is true, the ❯ selection UI is kept — only separator lines
+// and the last line are removed.
+func PreviewFromContent(content string, n int, waiting bool) []string {
 	lines := strings.Split(content, "\n")
+	if waiting {
+		lines = stripWaitingChrome(lines)
+	} else {
+		lines = stripChromeLines(lines)
+	}
 	var result []string
 	for i := len(lines) - 1; i >= 0 && len(result) < n; i-- {
 		line := strings.TrimSpace(stripAnsiStr(lines[i]))
@@ -234,6 +258,98 @@ func PreviewFromContent(content string, n int) []string {
 		}
 	}
 	return result
+}
+
+// stripWaitingChrome removes only separator lines and the last non-blank line,
+// keeping the ❯ selection UI visible for WAITING agents.
+func stripWaitingChrome(lines []string) []string {
+	// Filter out separator lines
+	var filtered []string
+	for _, l := range lines {
+		stripped := strings.TrimSpace(stripAnsiStr(l))
+		if !isSeparatorLine(stripped) {
+			filtered = append(filtered, l)
+		}
+	}
+
+	// Drop the last non-blank line (status/chrome line)
+	for i := len(filtered) - 1; i >= 0; i-- {
+		stripped := strings.TrimSpace(stripAnsiStr(filtered[i]))
+		if stripped != "" {
+			filtered = append(filtered[:i], filtered[i+1:]...)
+			break
+		}
+	}
+
+	return filtered
+}
+
+// stripChromeLines removes Claude Code's bottom chrome (separator, ❯ prompt,
+// state line) from captured pane lines.
+func stripChromeLines(lines []string) []string {
+	// Find last ❯ line (bottom-up)
+	promptIdx := -1
+	for i := len(lines) - 1; i >= 0; i-- {
+		stripped := strings.TrimSpace(stripAnsiStr(lines[i]))
+		if strings.HasPrefix(stripped, "❯") {
+			promptIdx = i
+			break
+		}
+	}
+	if promptIdx < 0 {
+		return lines
+	}
+	// Find separator above ❯
+	for i := promptIdx - 1; i >= 0; i-- {
+		stripped := strings.TrimSpace(stripAnsiStr(lines[i]))
+		if isSeparatorLine(stripped) {
+			return lines[:i]
+		}
+	}
+	return lines[:promptIdx]
+}
+
+// isSeparatorLine returns true if the string is a horizontal rule made of ─ or - chars.
+func isSeparatorLine(s string) bool {
+	if len(s) < 10 {
+		return false
+	}
+	for _, r := range s {
+		if r != '─' && r != '-' {
+			return false
+		}
+	}
+	return true
+}
+
+// DetectModeFromContent scans the last few non-blank lines of pane content
+// for Claude Code mode indicators and returns a short tag string.
+func DetectModeFromContent(content string) string {
+	lines := strings.Split(content, "\n")
+
+	// Collect last 5 non-blank lines (bottom-up)
+	var recent []string
+	for i := len(lines) - 1; i >= 0 && len(recent) < 5; i-- {
+		line := strings.TrimSpace(stripAnsiStr(lines[i]))
+		if line != "" {
+			recent = append(recent, line)
+		}
+	}
+
+	for _, line := range recent {
+		lower := strings.ToLower(line)
+		// Skip lines that describe leaving a mode (e.g. "Exited Plan Mode")
+		if strings.Contains(lower, "exit") {
+			continue
+		}
+		if strings.Contains(lower, "accept edits") || strings.Contains(line, "⏵⏵") {
+			return "EDITS"
+		}
+		if strings.Contains(lower, "plan mode") || (strings.Contains(line, "⏸") && strings.Contains(lower, "plan")) {
+			return "PLAN"
+		}
+	}
+	return ""
 }
 
 // discoverTmuxClaude finds tmux sessions running claude (excluding our own sessions).

@@ -92,7 +92,29 @@ var (
 	// Separator line
 	Separator = lipgloss.NewStyle().
 			Foreground(ColorBorder)
+
+	// Mode badges
+	ModeBadgeEdits = lipgloss.NewStyle().
+			Background(lipgloss.Color("#AF87FF")).
+			Foreground(lipgloss.Color("#1a1a2e")).
+			Bold(true).
+			Padding(0, 1)
+
+	ModeBadgePlan = lipgloss.NewStyle().
+			Background(lipgloss.Color("#4DD9D9")).
+			Foreground(lipgloss.Color("#1a1a2e")).
+			Bold(true).
+			Padding(0, 1)
 )
+
+func ModeBadgeFor(mode string) string {
+	switch mode {
+	case "PLAN":
+		return ModeBadgePlan.Render(mode)
+	default:
+		return ModeBadgeEdits.Render(mode)
+	}
+}
 
 func StatusBadge(status string) string {
 	switch status {

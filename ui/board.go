@@ -143,9 +143,9 @@ func RenderFooter(width int, mode int) string {
 	var keys string
 	switch mode {
 	case 1:
-		keys = "[←/→]Cycle  [N]ew  [Enter]Zoom  [K]ill  [S]end  [D]iscover  [C]lear  [1/2/3]Mode  [Q]uit"
-	default:
 		keys = "[↑/↓]Nav  [N]ew  [Enter]Zoom  [K]ill  [S]end  [D]iscover  [C]lear  [1/2/3]Mode  [Q]uit"
+	default:
+		keys = "[↑/↓]Nav  [←/→]Column  [N]ew  [Enter]Zoom  [K]ill  [S]end  [D]iscover  [C]lear  [1/2/3]Mode  [Q]uit"
 	}
 	return FooterStyle.Width(width).Render(HelpStyle.Render(keys))
 }

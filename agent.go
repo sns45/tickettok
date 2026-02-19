@@ -118,7 +118,32 @@ func (m *AgentManager) GetPreview(agent *Agent, n int) []string {
 		return nil
 	}
 
-	return PreviewFromContent(content, n)
+	return PreviewFromContent(content, n, false)
+}
+
+// PaneInfo holds both preview lines and detected mode from a single pane capture.
+type PaneInfo struct {
+	Preview []string
+	Mode    string
+}
+
+// GetPaneInfo captures the pane once and returns both preview and mode.
+// status is passed so preview stripping can adapt (e.g. WAITING keeps ❯ lines).
+func (m *AgentManager) GetPaneInfo(agent *Agent, n int) PaneInfo {
+	sess := m.GetSession(agent)
+	if sess == nil {
+		return PaneInfo{}
+	}
+
+	content, err := sess.CapturePaneContent()
+	if err != nil {
+		return PaneInfo{}
+	}
+
+	return PaneInfo{
+		Preview: PreviewFromContent(content, n, agent.Status == StatusWaiting),
+		Mode:    DetectModeFromContent(content),
+	}
 }
 
 // SendKeys sends text input to the agent's tmux pane.

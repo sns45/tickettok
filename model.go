@@ -207,9 +207,13 @@ func (m *Model) handleBoardNav(key string) (tea.Model, tea.Cmd) {
 
 	switch key {
 	case "j", "down":
-		m.selected = (m.selected + 1) % n
+		m.selected = m.nextInSameColumn(+1)
 	case "k", "up":
-		m.selected = (m.selected - 1 + n) % n
+		m.selected = m.nextInSameColumn(-1)
+	case "l", "right":
+		m.selected = m.nextInColumn(1)
+	case "h", "left":
+		m.selected = m.nextInColumn(-1)
 	case "enter":
 		return m.enterZoom()
 	case "K":
@@ -219,6 +223,119 @@ func (m *Model) handleBoardNav(key string) (tea.Model, tea.Cmd) {
 	}
 	m.ensureSelectedVisible()
 	return m, nil
+}
+
+// nextInColumn returns the flat index of the nearest agent in an adjacent column.
+// delta is -1 (left) or +1 (right).
+func (m *Model) nextInColumn(delta int) int {
+	n := len(m.agents)
+	if n == 0 || m.selected >= n {
+		return m.selected
+	}
+
+	// Build column assignment for each agent
+	cols := make([]int, n)
+	for i, a := range m.agents {
+		cols[i] = m.columnForStatus(a.Status)
+	}
+
+	curCol := cols[m.selected]
+
+	// Compute current row within current column
+	curRow := 0
+	for i := 0; i < m.selected; i++ {
+		if cols[i] == curCol {
+			curRow++
+		}
+	}
+
+	// Target column, clamped
+	maxCol := m.columns - 1
+	targetCol := curCol + delta
+	if targetCol < 0 {
+		targetCol = 0
+	}
+	if targetCol > maxCol {
+		targetCol = maxCol
+	}
+	if targetCol == curCol {
+		return m.selected
+	}
+
+	// Find agents in target column, pick closest row
+	bestIdx := m.selected
+	bestDist := n + 1
+	row := 0
+	for i := 0; i < n; i++ {
+		if cols[i] == targetCol {
+			dist := row - curRow
+			if dist < 0 {
+				dist = -dist
+			}
+			if dist < bestDist {
+				bestDist = dist
+				bestIdx = i
+			}
+			row++
+		}
+	}
+
+	return bestIdx
+}
+
+// nextInSameColumn returns the flat index of the next (delta=+1) or previous (delta=-1)
+// agent within the same column as the currently selected agent.
+func (m *Model) nextInSameColumn(delta int) int {
+	n := len(m.agents)
+	if n == 0 || m.selected >= n {
+		return m.selected
+	}
+
+	curCol := m.columnForStatus(m.agents[m.selected].Status)
+
+	// Collect flat indices of agents in the same column
+	var sameCol []int
+	for i, a := range m.agents {
+		if m.columnForStatus(a.Status) == curCol {
+			sameCol = append(sameCol, i)
+		}
+	}
+
+	// Find current position within column
+	pos := 0
+	for i, idx := range sameCol {
+		if idx == m.selected {
+			pos = i
+			break
+		}
+	}
+
+	// Move within column, wrapping around
+	k := len(sameCol)
+	newPos := (pos + delta%k + k) % k
+	return sameCol[newPos]
+}
+
+// columnForStatus returns the column index for a given agent status.
+func (m *Model) columnForStatus(status AgentStatus) int {
+	if m.columns == 2 {
+		// 2-col: IDLE/DONE=0, ACTIVE(RUNNING+WAITING)=1
+		switch status {
+		case StatusRunning, StatusWaiting:
+			return 1
+		default:
+			return 0
+		}
+	}
+	// 3-col: IDLE/DONE=0, WAITING=1, RUNNING=2
+	switch status {
+	case StatusWaiting:
+		return 1
+	case StatusRunning:
+		return 2
+	default:
+		return 0
+	}
 }
 
 // ensureSelectedVisible adjusts scrollOffset so the selected agent's card is on screen.
@@ -248,9 +365,9 @@ func (m *Model) handleCarouselNav(key string) (tea.Model, tea.Cmd) {
 	}
 
 	switch key {
-	case "l", "right", "j", "down":
+	case "j", "down":
 		m.selected = (m.selected + 1) % n
-	case "h", "left", "k", "up":
+	case "k", "up":
 		m.selected = (m.selected - 1 + n) % n
 	case "enter":
 		return m.enterZoom()
@@ -267,7 +384,7 @@ func (m *Model) handleZoomKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
 	// Ctrl+Q or Esc exits zoom
-	if key == "ctrl+q" || key == "esc" {
+	if key == "ctrl+q" {
 		m.view = viewBoard
 		if m.columns == 1 {
 			m.view = viewCarousel
@@ -307,6 +424,8 @@ func (m *Model) forwardKeyToTmux(msg tea.KeyMsg) {
 		tmuxKey = "BSpace"
 	case tea.KeyTab:
 		tmuxKey = "Tab"
+	case tea.KeyShiftTab:
+		tmuxKey = "BTab"
 	case tea.KeyUp:
 		tmuxKey = "Up"
 	case tea.KeyDown:
@@ -558,9 +677,6 @@ func (m *Model) killSelected() {
 
 func (m *Model) refreshStatuses() {
 	for _, agent := range m.agents {
-		if agent.Status == StatusDone {
-			continue
-		}
 		newStatus := m.manager.DetectStatus(agent)
 		if newStatus != agent.Status {
 			m.store.Update(agent.ID, newStatus)
@@ -634,7 +750,7 @@ func (m Model) viewZoom() string {
 		Bold(true).
 		Foreground(ui.ColorAccent).
 		Render(fmt.Sprintf(" ZOOM: %s ", name))
-	help := ui.HelpStyle.Render("[Ctrl+Q/Esc] return to dashboard")
+	help := ui.HelpStyle.Render("[Ctrl+Q] return to dashboard")
 	gap := m.width - lipgloss.Width(header) - lipgloss.Width(help) - 1
 	if gap < 1 {
 		gap = 1
@@ -701,16 +817,25 @@ func (m Model) viewCarousel() string {
 		status = ui.DimText.Render("  " + m.statusMsg)
 	}
 
-	cards := m.buildCardData()
-	carousel := ui.RenderCarousel(cards, m.selected, m.width, m.height)
-
-	content := lipgloss.JoinVertical(lipgloss.Left, title, "", carousel)
-
-	contentHeight := lipgloss.Height(content)
+	titleHeight := lipgloss.Height(title) + 1
 	footerHeight := lipgloss.Height(footer)
 	if status != "" {
 		footerHeight += lipgloss.Height(status)
 	}
+	carouselHeight := m.height - titleHeight - footerHeight - 1
+	if carouselHeight < 5 {
+		carouselHeight = 5
+	}
+
+	cards := m.buildCardData()
+	carousel := ui.RenderCarousel(cards, m.selected, m.width, m.height)
+
+	// Crop to available height with scroll support
+	carousel = cropToHeight(carousel, carouselHeight, m.scrollOffset)
+
+	content := lipgloss.JoinVertical(lipgloss.Left, title, "", carousel)
+
+	contentHeight := lipgloss.Height(content)
 	gap := m.height - contentHeight - footerHeight - 1
 	if gap > 0 {
 		content += strings.Repeat("\n", gap)
@@ -826,14 +951,15 @@ func (m Model) buildCardData() []ui.CardData {
 	now := time.Now()
 	cards := make([]ui.CardData, len(m.agents))
 	for i, a := range m.agents {
-		preview := m.manager.GetPreview(a, 6)
+		info := m.manager.GetPaneInfo(a, 13)
 		cards[i] = ui.CardData{
 			Name:     a.Name,
 			Dir:      a.Dir,
 			Status:   string(a.Status),
+			Mode:     info.Mode,
 			Uptime:   now.Sub(a.CreatedAt),
 			Since:    now.Sub(a.StatusSince),
-			Preview:  preview,
+			Preview:  info.Preview,
 			Selected: i == m.selected,
 		}
 	}
