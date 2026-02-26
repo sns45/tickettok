@@ -26,6 +26,7 @@ type Agent struct {
 	CreatedAt   time.Time   `json:"created_at"`
 	StatusSince time.Time   `json:"status_since"`
 	SessionName string      `json:"session_name,omitempty"`
+	Discovered  bool        `json:"discovered,omitempty"`
 }
 
 type StateFile struct {
@@ -191,6 +192,19 @@ func (s *Store) List() []*Agent {
 	out := make([]*Agent, len(s.agents))
 	copy(out, s.agents)
 	return out
+}
+
+func (s *Store) UpdateDiscovered(id string, discovered bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, a := range s.agents {
+		if a.ID == id {
+			a.Discovered = discovered
+			break
+		}
+	}
+	_ = s.save()
 }
 
 func (s *Store) ClearDone() int {

@@ -125,6 +125,31 @@ func deriveNameFromDir(dir string) string {
 	return "agent"
 }
 
+// CapturePane captures tmux pane content by session name without PTY attachment.
+// Includes ANSI color codes (-e) for rendering in zoom/preview.
+func CapturePane(sessionName string) (string, error) {
+	out, err := exec.Command("tmux", "capture-pane", "-p", "-e", "-J", "-t", sessionName).Output()
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+// CapturePanePlain captures tmux pane content as plain text (no ANSI codes).
+// Used for discovery content checks where color codes interfere with matching.
+func CapturePanePlain(sessionName string) (string, error) {
+	out, err := exec.Command("tmux", "capture-pane", "-p", "-J", "-t", sessionName).Output()
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+// IsSessionAlive checks if a tmux session exists by name (standalone, no PTY needed).
+func IsSessionAlive(sessionName string) bool {
+	return exec.Command("tmux", "has-session", "-t", sessionName).Run() == nil
+}
+
 // --- Discovery ---
 
 // DiscoveredAgent represents a claude instance found via tmux or process scan.
@@ -352,12 +377,94 @@ func DetectModeFromContent(content string) string {
 	return ""
 }
 
+// looksLikeClaude checks pane content for Claude Code UI signatures.
+func looksLikeClaude(content string) bool {
+	lower := strings.ToLower(stripAnsiStr(content))
+	signatures := []string{
+		"❯",
+		"? for shortcuts",
+		"esc to interrupt",
+		"claude code",
+		"anthropic",
+		"allow once",
+		"allow always",
+	}
+	for _, sig := range signatures {
+		if strings.Contains(lower, sig) {
+			return true
+		}
+	}
+	return false
+}
+
 // discoverTmuxClaude finds tmux sessions running claude (excluding our own sessions).
 func discoverTmuxClaude() []DiscoveredAgent {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		return nil
 	}
 
+	// Use list-panes for better working dir accuracy
+	out, err := exec.Command("tmux", "list-panes", "-a", "-F", "#{session_name}|#{pane_current_path}|#{pane_current_command}").Output()
+	if err != nil {
+		// Fallback to list-sessions
+		return discoverTmuxClaudeFallback()
+	}
+
+	seen := make(map[string]bool)
+	var found []DiscoveredAgent
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "|", 3)
+		if len(parts) < 3 {
+			continue
+		}
+		sessName := parts[0]
+		dir := parts[1]
+		paneCmd := parts[2]
+
+		// Skip our own managed sessions
+		if strings.HasPrefix(sessName, sessionPrefix) {
+			continue
+		}
+
+		// Skip already-seen sessions (multiple panes)
+		if seen[sessName] {
+			continue
+		}
+
+		// Check pane command first (fast)
+		if strings.Contains(strings.ToLower(paneCmd), "claude") {
+			seen[sessName] = true
+			found = append(found, DiscoveredAgent{
+				Name:        deriveNameFromDir(dir),
+				Dir:         dir,
+				SessionName: sessName,
+			})
+			continue
+		}
+
+		// Fall back to content check
+		content, err := CapturePanePlain(sessName)
+		if err != nil {
+			continue
+		}
+		if looksLikeClaude(content) {
+			seen[sessName] = true
+			found = append(found, DiscoveredAgent{
+				Name:        deriveNameFromDir(dir),
+				Dir:         dir,
+				SessionName: sessName,
+			})
+		}
+	}
+
+	return found
+}
+
+// discoverTmuxClaudeFallback uses list-sessions when list-panes is unavailable.
+func discoverTmuxClaudeFallback() []DiscoveredAgent {
 	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}|#{session_path}|#{pane_current_command}").Output()
 	if err != nil {
 		return nil
@@ -380,25 +487,29 @@ func discoverTmuxClaude() []DiscoveredAgent {
 			continue
 		}
 
-		// Check if this session has claude
-		content, err := exec.Command("tmux", "capture-pane", "-p", "-t", sessName).Output()
+		// Check pane command
+		paneCmd := parts[2]
+		if strings.Contains(strings.ToLower(paneCmd), "claude") {
+			found = append(found, DiscoveredAgent{
+				Name:        deriveNameFromDir(dir),
+				Dir:         dir,
+				SessionName: sessName,
+			})
+			continue
+		}
+
+		// Check pane content
+		content, err := CapturePanePlain(sessName)
 		if err != nil {
 			continue
 		}
-		lower := strings.ToLower(string(content))
-		if !strings.Contains(lower, "claude") && !strings.Contains(lower, "anthropic") {
-			// Also check the pane command
-			paneCmd := parts[2]
-			if !strings.Contains(strings.ToLower(paneCmd), "claude") {
-				continue
-			}
+		if looksLikeClaude(content) {
+			found = append(found, DiscoveredAgent{
+				Name:        deriveNameFromDir(dir),
+				Dir:         dir,
+				SessionName: sessName,
+			})
 		}
-
-		found = append(found, DiscoveredAgent{
-			Name:        "tmux-" + sessName,
-			Dir:         dir,
-			SessionName: sessName,
-		})
 	}
 
 	return found

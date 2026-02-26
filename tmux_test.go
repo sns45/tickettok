@@ -279,6 +279,34 @@ func TestStripWaitingChrome(t *testing.T) {
 	}
 }
 
+func TestLooksLikeClaude(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    bool
+	}{
+		{"prompt symbol", "some output\n❯ type here", true},
+		{"shortcuts hint", "? for shortcuts\nprompt", true},
+		{"esc to interrupt", "Processing\nesc to interrupt", true},
+		{"claude code text", "Welcome to Claude Code\n>", true},
+		{"anthropic mention", "Powered by Anthropic\n>", true},
+		{"allow once", "Allow once\nAllow always", true},
+		{"ansi-wrapped prompt", "output\n\x1b[38;5;208m❯\x1b[0m type here", true},
+		{"ansi-wrapped shortcuts", "\x1b[2m? for shortcuts\x1b[0m", true},
+		{"ansi-wrapped esc hint", "\x1b[1mProcessing\x1b[0m\n\x1b[90mesc to interrupt\x1b[0m", true},
+		{"unrelated content", "hello world\nfoo bar", false},
+		{"empty", "", false},
+		{"bash session", "user@host:~$ ls\nfile1 file2", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := looksLikeClaude(tt.content); got != tt.want {
+				t.Errorf("looksLikeClaude() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestShellQuote(t *testing.T) {
 	tests := []struct {
 		name  string

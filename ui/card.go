@@ -11,14 +11,15 @@ import (
 
 // CardData holds the display data for an agent card.
 type CardData struct {
-	Name     string
-	Dir      string
-	Status   string
-	Mode     string
-	Uptime   time.Duration
-	Since    time.Duration
-	Preview  []string
-	Selected bool
+	Name       string
+	Dir        string
+	Status     string
+	Mode       string
+	Uptime     time.Duration
+	Since      time.Duration
+	Preview    []string
+	Selected   bool
+	Discovered bool
 }
 
 // RenderCard renders a single agent card at the given width.
@@ -30,7 +31,11 @@ func RenderCard(d CardData, width int) string {
 	style = style.Width(width - 2) // account for border
 
 	badge := StatusBadge(d.Status)
-	name := AgentName.Render(d.Name)
+	nameStr := d.Name
+	if d.Discovered {
+		nameStr += DimText.Render(" [ext]")
+	}
+	name := AgentName.Render(nameStr)
 	header := lipgloss.JoinHorizontal(lipgloss.Top, name, "  ", badge)
 	if d.Mode != "" {
 		modeTag := ModeBadgeFor(d.Mode)
@@ -85,7 +90,11 @@ func RenderCarouselCard(d CardData, width int, previewLines int) string {
 	style := CarouselCard.Width(width - 4)
 
 	badge := StatusBadge(d.Status)
-	name := AgentName.Render(d.Name)
+	nameStr := d.Name
+	if d.Discovered {
+		nameStr += DimText.Render(" [ext]")
+	}
+	name := AgentName.Render(nameStr)
 	header := lipgloss.JoinHorizontal(lipgloss.Top, name, "  ", badge)
 	if d.Mode != "" {
 		modeTag := ModeBadgeFor(d.Mode)

@@ -33,6 +33,12 @@ type tickMsg time.Time
 // zoomTickMsg carries captured tmux pane content for zoom view.
 type zoomTickMsg struct{ content string }
 
+// discoverMsg carries newly discovered external Claude agents.
+type discoverMsg struct{ found []DiscoveredAgent }
+
+// reconcileMsg signals that stale discovered agents have been reconciled.
+type reconcileMsg struct{}
+
 // Model is the Bubble Tea application model.
 type Model struct {
 	store    *Store
@@ -61,11 +67,14 @@ type Model struct {
 
 	// Scroll offset for board/carousel views
 	scrollOffset int
+
+	// Tick counter for periodic re-discovery
+	tickCount int
 }
 
 func initialModel(store *Store, manager *AgentManager) Model {
 	dirInput := textinput.New()
-	dirInput.Placeholder = "~/dev/project"
+	dirInput.Placeholder = "~/dev (default)"
 	dirInput.CharLimit = 200
 	dirInput.Width = 60
 
@@ -91,6 +100,8 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		tickCmd(),
 		tea.ClearScreen,
+		discoverCmd(),
+		reconcileCmd(m.store),
 	)
 }
 
@@ -106,8 +117,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		if m.view == viewZoom && m.zoomSession != "" && m.selected < len(m.agents) {
-			if sess := m.manager.GetSession(m.agents[m.selected]); sess != nil {
-				sess.SetSize(m.width, m.height-2)
+			agent := m.agents[m.selected]
+			if !agent.Discovered {
+				if sess := m.manager.GetSession(agent); sess != nil {
+					sess.SetSize(m.width, m.height-2)
+				}
 			}
 		}
 		return m, nil
@@ -115,7 +129,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		m.refreshStatuses()
 		m.agents = m.store.List()
-		return m, tickCmd()
+		m.tickCount++
+		var cmds []tea.Cmd
+		cmds = append(cmds, tickCmd())
+		// Re-discover every 5th tick (~10s)
+		if m.tickCount%5 == 0 {
+			cmds = append(cmds, discoverCmd())
+		}
+		return m, tea.Batch(cmds...)
+
+	case discoverMsg:
+		m.mergeDiscovered(msg.found)
+		m.agents = m.store.List()
+		return m, nil
+
+	case reconcileMsg:
+		m.agents = m.store.List()
+		return m, nil
 
 	case zoomTickMsg:
 		if m.view == viewZoom {
@@ -559,7 +589,8 @@ func (m *Model) doSpawn() (tea.Model, tea.Cmd) {
 	dir := strings.TrimSpace(m.spawnDir.Value())
 
 	if dir == "" {
-		dir, _ = os.Getwd()
+		home, _ := os.UserHomeDir()
+		dir = filepath.Join(home, "dev")
 	}
 	if strings.HasPrefix(dir, "~/") {
 		home, _ := os.UserHomeDir()
@@ -616,6 +647,20 @@ func (m *Model) enterZoom() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	agent := m.agents[m.selected]
+
+	if agent.Discovered {
+		// PTY-free path: no GetSession/SetSize, just capture directly
+		if !IsSessionAlive(agent.SessionName) {
+			m.setStatus("External session no longer alive")
+			return m, nil
+		}
+		m.zoomAgentID = agent.ID
+		m.zoomSession = agent.SessionName
+		m.zoomContent = ""
+		m.view = viewZoom
+		return m, zoomCaptureCmd(agent.SessionName)
+	}
+
 	sess := m.manager.GetSession(agent)
 	if sess == nil || !sess.IsAlive() {
 		m.setStatus("No active tmux session — spawn a new agent first")
@@ -682,31 +727,37 @@ func (m *Model) refreshStatuses() {
 			m.store.Update(agent.ID, newStatus)
 		}
 	}
+
+	// Auto-remove discovered agents that have been DONE for >30s
+	for _, agent := range m.agents {
+		if agent.Discovered && agent.Status == StatusDone &&
+			time.Since(agent.StatusSince) > 30*time.Second {
+			m.store.Remove(agent.ID)
+		}
+	}
 }
 
 func (m *Model) discoverAgents() {
 	found := discoverTmuxClaude()
-	added := 0
-	for _, d := range found {
-		// Skip if already tracked by session name
-		existing := false
-		for _, a := range m.agents {
-			if a.SessionName == d.SessionName {
-				existing = true
-				break
-			}
-		}
-		if existing {
-			continue
-		}
-		name := deriveNameFromDir(d.Dir)
-		agent := m.store.Add(name, d.Dir)
-		agent.SessionName = d.SessionName
-		m.store.UpdateSessionName(agent.ID, d.SessionName)
-		added++
-	}
+	before := len(m.agents)
+	m.mergeDiscovered(found)
 	m.agents = m.store.List()
-	m.setStatus(fmt.Sprintf("Discovered %d new agent(s)", added))
+	added := len(m.agents) - before
+
+	// Count total external agents for a more informative message
+	totalExt := 0
+	for _, a := range m.agents {
+		if a.Discovered && a.Status != StatusDone {
+			totalExt++
+		}
+	}
+	if added > 0 {
+		m.setStatus(fmt.Sprintf("Discovered %d new agent(s)", added))
+	} else if totalExt > 0 {
+		m.setStatus(fmt.Sprintf("No new agents (%d external tracked)", totalExt))
+	} else {
+		m.setStatus("No external Claude sessions found")
+	}
 }
 
 func (m *Model) setStatus(msg string) {
@@ -910,8 +961,10 @@ func (m Model) viewConfirmQuit() string {
 
 func (m Model) viewConfirmKill() string {
 	name := "(none)"
+	isDiscovered := false
 	if m.selected < len(m.agents) {
 		name = m.agents[m.selected].Name
+		isDiscovered = m.agents[m.selected].Discovered
 	}
 
 	dialog := lipgloss.NewStyle().
@@ -920,10 +973,15 @@ func (m Model) viewConfirmKill() string {
 		Padding(1, 2).
 		Width(50)
 
+	warning := "This will destroy the tmux session."
+	if isDiscovered {
+		warning = "This is an external session. Killing it will terminate the Claude instance."
+	}
+
 	content := lipgloss.JoinVertical(lipgloss.Left,
 		ui.AgentName.Render(fmt.Sprintf("Kill agent: %s?", name)),
 		"",
-		"This will destroy the tmux session.",
+		warning,
 		"",
 		ui.HelpStyle.Render("[Y] kill  [N/Esc] cancel"),
 	)
@@ -953,15 +1011,65 @@ func (m Model) buildCardData() []ui.CardData {
 	for i, a := range m.agents {
 		info := m.manager.GetPaneInfo(a, 13)
 		cards[i] = ui.CardData{
-			Name:     a.Name,
-			Dir:      a.Dir,
-			Status:   string(a.Status),
-			Mode:     info.Mode,
-			Uptime:   now.Sub(a.CreatedAt),
-			Since:    now.Sub(a.StatusSince),
-			Preview:  info.Preview,
-			Selected: i == m.selected,
+			Name:       a.Name,
+			Dir:        a.Dir,
+			Status:     string(a.Status),
+			Mode:       info.Mode,
+			Uptime:     now.Sub(a.CreatedAt),
+			Since:      now.Sub(a.StatusSince),
+			Preview:    info.Preview,
+			Selected:   i == m.selected,
+			Discovered: a.Discovered,
 		}
 	}
 	return cards
+}
+
+// discoverCmd runs discovery asynchronously and returns a discoverMsg.
+func discoverCmd() tea.Cmd {
+	return func() tea.Msg {
+		found := discoverTmuxClaude()
+		return discoverMsg{found: found}
+	}
+}
+
+// reconcileCmd checks discovered agents in state and marks stale ones DONE.
+func reconcileCmd(store *Store) tea.Cmd {
+	return func() tea.Msg {
+		for _, a := range store.List() {
+			if a.Discovered && a.Status != StatusDone {
+				if !IsSessionAlive(a.SessionName) {
+					store.Update(a.ID, StatusDone)
+				}
+			}
+		}
+		return reconcileMsg{}
+	}
+}
+
+// mergeDiscovered adds newly found external agents that aren't already tracked.
+func (m *Model) mergeDiscovered(found []DiscoveredAgent) {
+	for _, d := range found {
+		// Check if already tracked by session name
+		var match *Agent
+		for _, a := range m.agents {
+			if a.SessionName == d.SessionName {
+				match = a
+				break
+			}
+		}
+		if match != nil {
+			// Revive dead agents whose session came back (reused tmux session name)
+			if match.Status == StatusDone {
+				m.store.Update(match.ID, StatusRunning)
+				m.store.UpdateDiscovered(match.ID, true)
+			}
+			continue
+		}
+		agent := m.store.Add(d.Name, d.Dir)
+		agent.SessionName = d.SessionName
+		agent.Discovered = true
+		m.store.UpdateSessionName(agent.ID, d.SessionName)
+		m.store.UpdateDiscovered(agent.ID, true)
+	}
 }

@@ -86,7 +86,20 @@ func (m *AgentManager) GetSession(agent *Agent) *TmuxSession {
 }
 
 // DetectStatus checks hook-based status first, then falls back to capture-pane scraping.
+// For discovered (external) agents, uses PTY-free capture to avoid detaching the user's terminal.
 func (m *AgentManager) DetectStatus(agent *Agent) AgentStatus {
+	if agent.Discovered {
+		// PTY-free path for external sessions
+		if !IsSessionAlive(agent.SessionName) {
+			return StatusDone
+		}
+		content, err := CapturePane(agent.SessionName)
+		if err != nil {
+			return StatusDone
+		}
+		return DetectStatusFromContent(content)
+	}
+
 	// Try hook-based status first (fast, no subprocess)
 	if status, ok := readHookStatus(agent.ID); ok {
 		return status
@@ -129,13 +142,25 @@ type PaneInfo struct {
 
 // GetPaneInfo captures the pane once and returns both preview and mode.
 // status is passed so preview stripping can adapt (e.g. WAITING keeps ❯ lines).
+// For discovered (external) agents, uses PTY-free capture.
 func (m *AgentManager) GetPaneInfo(agent *Agent, n int) PaneInfo {
-	sess := m.GetSession(agent)
-	if sess == nil {
-		return PaneInfo{}
+	var content string
+	var err error
+
+	if agent.Discovered {
+		// PTY-free path for external sessions
+		if !IsSessionAlive(agent.SessionName) {
+			return PaneInfo{}
+		}
+		content, err = CapturePane(agent.SessionName)
+	} else {
+		sess := m.GetSession(agent)
+		if sess == nil {
+			return PaneInfo{}
+		}
+		content, err = sess.CapturePaneContent()
 	}
 
-	content, err := sess.CapturePaneContent()
 	if err != nil {
 		return PaneInfo{}
 	}

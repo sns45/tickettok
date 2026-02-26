@@ -1,5 +1,7 @@
 # TicketTok
 
+![TicketTok](assets/marketing/poster.png)
+
 Auto-updating status tracking dashboard for multitasking between multiple Claude Code instances via tmux.
 
 Built with [Go](https://go.dev), [Bubble Tea](https://github.com/charmbracelet/bubbletea), [Lipgloss](https://github.com/charmbracelet/lipgloss), and [creack/pty](https://github.com/creack/pty).
