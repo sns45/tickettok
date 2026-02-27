@@ -6,14 +6,15 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
-	"github.com/sns45/tickettok/ui"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/sns45/tickettok/ui"
 )
 
 // sgrMouseRe matches SGR mouse escape sequences that arrive as literal runes
@@ -58,7 +59,9 @@ type Model struct {
 	height   int
 
 	// Spawn dialog fields
-	spawnDir textinput.Model
+	spawnDir        textinput.Model
+	spawnSuggestions []string // filtered directory matches
+	spawnSelIdx     int      // selected suggestion index (-1 = none)
 
 	// Send dialog
 	sendInput textinput.Model
@@ -295,7 +298,7 @@ func (m *Model) handleBoardNav(key string) (tea.Model, tea.Cmd) {
 		m.selected = m.nextInColumn(-1)
 	case "enter":
 		return m.enterZoom()
-	case "K":
+	case "x", "K":
 		m.view = viewConfirmKill
 	case "s", "S":
 		m.openSendDialog()
@@ -450,7 +453,7 @@ func (m *Model) handleCarouselNav(key string) (tea.Model, tea.Cmd) {
 		m.selected = (m.selected - 1 + n) % n
 	case "enter":
 		return m.enterZoom()
-	case "K":
+	case "x", "K":
 		m.view = viewConfirmKill
 	case "s", "S":
 		m.openSendDialog()
@@ -623,18 +626,49 @@ func (m *Model) forwardKeyToTmux(msg tea.KeyMsg) {
 }
 
 func (m *Model) handleSpawnKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
+	key := msg.String()
+	switch key {
 	case "esc":
 		m.view = viewBoard
 		if m.columns == 1 {
 			m.view = viewCarousel
 		}
 		return m, nil
+	case "tab", "down":
+		// Move selection down in suggestions
+		if len(m.spawnSuggestions) > 0 {
+			m.spawnSelIdx++
+			if m.spawnSelIdx >= len(m.spawnSuggestions) {
+				m.spawnSelIdx = 0
+			}
+		}
+		return m, nil
+	case "shift+tab", "up":
+		// Move selection up in suggestions
+		if len(m.spawnSuggestions) > 0 {
+			m.spawnSelIdx--
+			if m.spawnSelIdx < 0 {
+				m.spawnSelIdx = len(m.spawnSuggestions) - 1
+			}
+		}
+		return m, nil
 	case "enter":
+		// If a suggestion is selected, apply it and drill deeper
+		if m.spawnSelIdx >= 0 && m.spawnSelIdx < len(m.spawnSuggestions) {
+			sel := m.spawnSuggestions[m.spawnSelIdx]
+			m.spawnDir.SetValue(sel + "/")
+			m.spawnDir.CursorEnd()
+			m.spawnSelIdx = -1
+			m.refreshSpawnSuggestions()
+			return m, nil
+		}
+		// No selection — spawn
 		return m.doSpawn()
 	}
+	// Forward other keys to textinput, then refresh suggestions
 	var cmd tea.Cmd
 	m.spawnDir, cmd = m.spawnDir.Update(msg)
+	m.refreshSpawnSuggestions()
 	return m, cmd
 }
 
@@ -687,8 +721,10 @@ func (m *Model) handleConfirmKill(key string) (tea.Model, tea.Cmd) {
 
 func (m *Model) openSpawnDialog() {
 	m.view = viewSpawn
-	m.spawnDir.SetValue("")
+	m.spawnDir.SetValue("~/dev/")
+	m.spawnDir.CursorEnd()
 	m.spawnDir.Focus()
+	m.refreshSpawnSuggestions()
 }
 
 func (m *Model) openSendDialog() {
@@ -893,6 +929,87 @@ func (m *Model) updateSpawnInputs(msg tea.Msg) tea.Cmd {
 	return cmd
 }
 
+// expandTilde replaces a leading ~/ with the user's home directory.
+func expandTilde(path string) string {
+	if strings.HasPrefix(path, "~/") {
+		home, _ := os.UserHomeDir()
+		return filepath.Join(home, path[2:])
+	}
+	return path
+}
+
+// collapseTilde replaces the home directory prefix with ~/ for display.
+func collapseTilde(path string) string {
+	home, _ := os.UserHomeDir()
+	if strings.HasPrefix(path, home+"/") {
+		return "~/" + path[len(home)+1:]
+	}
+	if path == home {
+		return "~"
+	}
+	return path
+}
+
+// listSubdirs returns sorted subdirectory paths under dir (with ~/ prefix for display).
+func listSubdirs(dir string) []string {
+	expanded := expandTilde(dir)
+	entries, err := os.ReadDir(expanded)
+	if err != nil {
+		return nil
+	}
+	var dirs []string
+	for _, e := range entries {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		full := filepath.Join(expanded, e.Name())
+		dirs = append(dirs, collapseTilde(full))
+	}
+	sort.Strings(dirs)
+	if len(dirs) > 20 {
+		dirs = dirs[:20]
+	}
+	return dirs
+}
+
+// refreshSpawnSuggestions updates the suggestion list based on current input.
+func (m *Model) refreshSpawnSuggestions() {
+	val := m.spawnDir.Value()
+	if val == "" {
+		m.spawnSuggestions = nil
+		m.spawnSelIdx = -1
+		return
+	}
+
+	// Determine base directory and partial name
+	var baseDir, partial string
+	if strings.HasSuffix(val, "/") {
+		// Input ends with / — list contents of that directory
+		baseDir = val
+		partial = ""
+	} else {
+		// Input has a partial name — split into dir + prefix
+		baseDir = filepath.Dir(val) + "/"
+		partial = filepath.Base(val)
+	}
+
+	all := listSubdirs(baseDir)
+	if partial == "" {
+		m.spawnSuggestions = all
+	} else {
+		lowerPartial := strings.ToLower(partial)
+		var filtered []string
+		for _, s := range all {
+			name := filepath.Base(s)
+			if strings.HasPrefix(strings.ToLower(name), lowerPartial) {
+				filtered = append(filtered, s)
+			}
+		}
+		m.spawnSuggestions = filtered
+	}
+	m.spawnSelIdx = -1
+}
+
 // View renders the full UI.
 func (m Model) View() string {
 	switch m.view {
@@ -1048,9 +1165,41 @@ func (m Model) viewSpawn() string {
 		"Directory:", m.spawnDir.View(),
 	)
 
-	help := ui.HelpStyle.Render("[Enter] spawn  [Esc] cancel")
+	// Render suggestion list (max 8 visible)
+	maxShow := 8
+	if len(m.spawnSuggestions) < maxShow {
+		maxShow = len(m.spawnSuggestions)
+	}
+	var suggLines []string
+	for i := 0; i < maxShow; i++ {
+		name := filepath.Base(m.spawnSuggestions[i])
+		if i == m.spawnSelIdx {
+			suggLines = append(suggLines, lipgloss.NewStyle().
+				Foreground(ui.ColorAccent).Bold(true).
+				Render("  > "+name))
+		} else {
+			suggLines = append(suggLines, lipgloss.NewStyle().
+				Foreground(ui.ColorDim).
+				Render("    "+name))
+		}
+	}
+	suggestions := strings.Join(suggLines, "\n")
 
-	content := lipgloss.JoinVertical(lipgloss.Left, title, "", fields, "", help)
+	var help string
+	if len(m.spawnSuggestions) > 0 {
+		help = ui.HelpStyle.Render("[Enter] select  [Tab/↓] next  [Esc] cancel")
+	} else {
+		help = ui.HelpStyle.Render("[Enter] spawn  [Esc] cancel")
+	}
+
+	var parts []string
+	parts = append(parts, title, "", fields)
+	if suggestions != "" {
+		parts = append(parts, suggestions)
+	}
+	parts = append(parts, "", help)
+
+	content := lipgloss.JoinVertical(lipgloss.Left, parts...)
 
 	rendered := dialog.Render(content)
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, rendered)
