@@ -31,7 +31,6 @@ const (
 	viewZoom
 	viewSpawn
 	viewSend
-	viewConfirmQuit
 	viewConfirmKill
 )
 
@@ -227,8 +226,6 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case m.view == viewZoom:
 		return m.handleZoomKey(msg)
-	case m.view == viewConfirmQuit:
-		return m.handleConfirmQuit(key)
 	case m.view == viewConfirmKill:
 		return m.handleConfirmKill(key)
 	case m.view == viewSpawn:
@@ -239,10 +236,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Board/carousel keys
 	switch key {
-	case "q":
-		m.view = viewConfirmQuit
-		return m, nil
-	case "ctrl+c":
+	case "q", "ctrl+q", "ctrl+c":
 		return m, tea.Quit
 	case "n":
 		m.openSpawnDialog()
@@ -688,19 +682,6 @@ func (m *Model) handleSendKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m *Model) handleConfirmQuit(key string) (tea.Model, tea.Cmd) {
-	switch key {
-	case "y", "Y", "enter":
-		return m, tea.Quit
-	default:
-		m.view = viewBoard
-		if m.columns == 1 {
-			m.view = viewCarousel
-		}
-		return m, nil
-	}
-}
-
 func (m *Model) handleConfirmKill(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "y", "Y", "enter":
@@ -1019,8 +1000,6 @@ func (m Model) View() string {
 		return m.viewSpawn()
 	case viewSend:
 		return m.viewSend()
-	case viewConfirmQuit:
-		return m.viewConfirmQuit()
 	case viewConfirmKill:
 		return m.viewConfirmKill()
 	case viewCarousel:
@@ -1223,25 +1202,6 @@ func (m Model) viewSend() string {
 		title, "",
 		"Message:", m.sendInput.View(), "",
 		ui.HelpStyle.Render("[Enter] send  [Esc] cancel"),
-	)
-
-	rendered := dialog.Render(content)
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, rendered)
-}
-
-func (m Model) viewConfirmQuit() string {
-	dialog := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(ui.ColorWaiting).
-		Padding(1, 2).
-		Width(50)
-
-	content := lipgloss.JoinVertical(lipgloss.Left,
-		ui.AgentName.Render("Quit TicketTok?"),
-		"",
-		"Running agents will continue in tmux.",
-		"",
-		ui.HelpStyle.Render("[Y] quit  [N/Esc] cancel"),
 	)
 
 	rendered := dialog.Render(content)
