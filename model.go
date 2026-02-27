@@ -5,6 +5,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"github.com/sns45/tickettok/ui"
@@ -13,6 +15,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
+
+// sgrMouseRe matches SGR mouse escape sequences that arrive as literal runes
+// when bubbletea fails to parse them (e.g. "[<65;132;34M").
+// Captures the button number in group 1 for scroll handling.
+var sgrMouseRe = regexp.MustCompile(`<(\d+);\d+;\d+[Mm]`)
 
 // View modes
 type viewMode int
@@ -57,9 +64,12 @@ type Model struct {
 	sendInput textinput.Model
 
 	// Zoom mode
-	zoomAgentID   string
-	zoomSession   string // tmux session name
-	zoomContent   string // captured pane content
+	zoomAgentID    string
+	zoomSession    string   // tmux session name
+	zoomContent    string   // captured pane content (full scrollback)
+	zoomScrollOff  int      // scroll offset from bottom (0 = follow latest)
+	zoomTotalLines int      // total lines in captured content
+	zoomAltBracket bool     // true after receiving alt+[ (potential SGR mouse prefix)
 
 	// Status message
 	statusMsg     string
@@ -102,6 +112,7 @@ func (m Model) Init() tea.Cmd {
 		tea.ClearScreen,
 		discoverCmd(),
 		reconcileCmd(m.store),
+		tea.SetWindowTitle("TicketTok"),
 	)
 }
 
@@ -150,9 +161,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case zoomTickMsg:
 		if m.view == viewZoom {
 			m.zoomContent = msg.content
+			m.zoomTotalLines = strings.Count(msg.content, "\n") + 1
 			return m, zoomCaptureCmd(m.zoomSession)
 		}
 		return m, nil
+
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -167,6 +182,40 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sendInput, cmd = m.sendInput.Update(msg)
 	}
 	return m, cmd
+}
+
+func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.view == viewZoom {
+		return m.handleZoomMouse(msg)
+	}
+	return m, nil
+}
+
+func (m *Model) handleZoomMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.zoomSession == "" {
+		return m, nil
+	}
+	scrollLines := 3
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
+		m.zoomScrollOff += scrollLines
+		// Clamp to max scrollable range
+		maxScroll := m.zoomTotalLines - (m.height - 2)
+		if maxScroll < 0 {
+			maxScroll = 0
+		}
+		if m.zoomScrollOff > maxScroll {
+			m.zoomScrollOff = maxScroll
+		}
+	case tea.MouseButtonWheelDown:
+		m.zoomScrollOff -= scrollLines
+		if m.zoomScrollOff < 0 {
+			m.zoomScrollOff = 0
+		}
+	default:
+		return m, nil
+	}
+	return m, nil
 }
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -413,7 +462,7 @@ func (m *Model) handleCarouselNav(key string) (tea.Model, tea.Cmd) {
 func (m *Model) handleZoomKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
-	// Ctrl+Q or Esc exits zoom
+	// Ctrl+Q exits zoom
 	if key == "ctrl+q" {
 		m.view = viewBoard
 		if m.columns == 1 {
@@ -425,7 +474,73 @@ func (m *Model) handleZoomKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.zoomAgentID = ""
 		m.zoomSession = ""
 		m.zoomContent = ""
+		m.zoomScrollOff = 0
+		return m, tea.SetWindowTitle("TicketTok")
+	}
+
+	// PgUp/PgDown scroll the zoom view by half a page
+	if msg.Type == tea.KeyPgUp || msg.Type == tea.KeyPgDown {
+		halfPage := (m.height - 2) / 2
+		if halfPage < 1 {
+			halfPage = 1
+		}
+		if msg.Type == tea.KeyPgUp {
+			m.zoomScrollOff += halfPage
+			maxScroll := m.zoomTotalLines - (m.height - 2)
+			if maxScroll < 0 {
+				maxScroll = 0
+			}
+			if m.zoomScrollOff > maxScroll {
+				m.zoomScrollOff = maxScroll
+			}
+		} else {
+			m.zoomScrollOff -= halfPage
+			if m.zoomScrollOff < 0 {
+				m.zoomScrollOff = 0
+			}
+		}
 		return m, nil
+	}
+
+	// SGR mouse sequence filter (two-phase).
+	// When bubbletea fails to parse SGR mouse events, they arrive as two KeyMsgs:
+	//   1) alt+[  (ESC [ interpreted as Alt+[)
+	//   2) <btn;x;yM  (runes)
+	// Phase 1: buffer alt+[ instead of forwarding it.
+	if key == "alt+[" && m.zoomSession != "" {
+		m.zoomAltBracket = true
+		return m, nil
+	}
+	// Phase 2: if previous key was alt+[, check if this completes an SGR mouse sequence.
+	if m.zoomAltBracket {
+		m.zoomAltBracket = false
+		if msg.Type == tea.KeyRunes && m.zoomSession != "" {
+			s := string(msg.Runes)
+			if sgrMouseRe.MatchString(s) {
+				// Adjust scroll offset (same as handleZoomMouse)
+				for _, match := range sgrMouseRe.FindAllStringSubmatch(s, -1) {
+					if btn, err := strconv.Atoi(match[1]); err == nil {
+						if btn == 64 {
+							m.zoomScrollOff += 3
+						} else if btn == 65 {
+							m.zoomScrollOff -= 3
+							if m.zoomScrollOff < 0 {
+								m.zoomScrollOff = 0
+							}
+						}
+					}
+				}
+				return m, nil
+			}
+		}
+		// Not a mouse sequence — flush the buffered alt+[ then fall through
+		exec.Command("tmux", "send-keys", "-t", m.zoomSession, "Escape").Run()
+		exec.Command("tmux", "send-keys", "-t", m.zoomSession, "-l", "[").Run()
+	}
+
+	// Any keypress resets scroll to follow latest output
+	if m.zoomScrollOff > 0 {
+		m.zoomScrollOff = 0
 	}
 
 	// Forward keystroke to tmux session
@@ -658,7 +773,10 @@ func (m *Model) enterZoom() (tea.Model, tea.Cmd) {
 		m.zoomSession = agent.SessionName
 		m.zoomContent = ""
 		m.view = viewZoom
-		return m, zoomCaptureCmd(agent.SessionName)
+		return m, tea.Batch(
+			zoomCaptureCmd(agent.SessionName),
+			tea.SetWindowTitle(fmt.Sprintf("TicketTok — %s", agent.Name)),
+		)
 	}
 
 	sess := m.manager.GetSession(agent)
@@ -675,14 +793,18 @@ func (m *Model) enterZoom() (tea.Model, tea.Cmd) {
 	// Resize tmux pane to match our terminal (delay slightly so Ink can redraw)
 	sess.SetSize(m.width, m.height-2)
 
-	return m, zoomCaptureCmd(sess.Name)
+	return m, tea.Batch(
+		zoomCaptureCmd(sess.Name),
+		tea.SetWindowTitle(fmt.Sprintf("TicketTok — %s", agent.Name)),
+	)
 }
 
-// zoomCaptureCmd returns a command that captures the tmux pane content.
+// zoomCaptureCmd returns a command that captures the tmux pane content
+// including full scrollback history (up to 10000 lines above visible area).
 func zoomCaptureCmd(sessionName string) tea.Cmd {
 	return func() tea.Msg {
 		time.Sleep(80 * time.Millisecond)
-		out, err := exec.Command("tmux", "capture-pane", "-p", "-e", "-J", "-t", sessionName).Output()
+		out, err := exec.Command("tmux", "capture-pane", "-p", "-e", "-J", "-S", "-10000", "-t", sessionName).Output()
 		if err != nil {
 			return zoomTickMsg{content: fmt.Sprintf("capture error: %v", err)}
 		}
@@ -808,17 +930,35 @@ func (m Model) viewZoom() string {
 	}
 	topBar := header + strings.Repeat(" ", gap) + help
 
-	// Pane content — trim to fit screen height
+	// Pane content — show a window into the full scrollback.
+	// zoomScrollOff=0 means "follow bottom" (show latest output).
 	content := m.zoomContent
 	lines := strings.Split(content, "\n")
 	maxLines := m.height - 2 // header + bottom margin
 	if maxLines < 1 {
 		maxLines = 1
 	}
-	if len(lines) > maxLines {
-		lines = lines[:maxLines]
+
+	// Calculate the visible window
+	end := len(lines) - m.zoomScrollOff
+	if end < maxLines {
+		end = maxLines
 	}
-	body := strings.Join(lines, "\n")
+	if end > len(lines) {
+		end = len(lines)
+	}
+	start := end - maxLines
+	if start < 0 {
+		start = 0
+	}
+	visible := lines[start:end]
+	body := strings.Join(visible, "\n")
+
+	// Show scroll indicator when not at bottom
+	if m.zoomScrollOff > 0 {
+		indicator := ui.HelpStyle.Render(fmt.Sprintf(" [scrolled +%d lines] ", m.zoomScrollOff))
+		topBar = topBar + "\n" + indicator
+	}
 
 	return topBar + "\n" + body
 }
