@@ -6,21 +6,7 @@ Auto-updating status tracking dashboard for multitasking between multiple Claude
 
 Built with [Go](https://go.dev), [Bubble Tea](https://github.com/charmbracelet/bubbletea), [Lipgloss](https://github.com/charmbracelet/lipgloss), and [creack/pty](https://github.com/creack/pty).
 
-```
- TicketTok                                      3 agents  [3-col]
-
- ■ IDLE [1]          ■ WAITING [1]        ■ RUNNING [1]
- ╭──────────────╮    ╭──────────────╮    ╭──────────────╮
- │ myapp        │    │ backend      │    │ frontend     │
- │  IDLE        │    │  WAITING     │    │  IN-PROGRESS │
- │ ~/dev/myapp  │    │ ~/dev/api    │    │ ~/dev/web    │
- │ ──────────── │    │ ──────────── │    │ ──────────── │
- │ Done. Need   │    │ Allow once   │    │ Writing      │
- │ anything?    │    │ Allow always │    │ component... │
- ╰──────────────╯    ╰──────────────╯    ╰──────────────╯
-
- [↑/↓]Nav  [←/→]Column  [N]ew  [Enter]Zoom  [K]ill  [S]end  [Q]uit
-```
+![TicketTok Screenshot](assets/marketing/screen1.png)
 
 ## Prerequisites
 
@@ -77,10 +63,10 @@ tickettok help         Show help
 | `Enter` | Zoom into agent (full terminal view) |
 | `Ctrl+Q` | Return from zoom |
 | `S` | Send message to selected agent |
-| `K` | Kill selected agent |
+| `X` | Kill selected agent |
 | `D` | Discover running claude instances |
 | `C` | Clear completed agents |
-| `Q` | Quit (agents keep running in tmux) |
+| `Ctrl+Q` | Quit (agents keep running in tmux) |
 
 In **zoom mode**, all keystrokes are forwarded to the agent's tmux session.
 
