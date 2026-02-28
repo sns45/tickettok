@@ -111,6 +111,27 @@ func TestNextInColumn(t *testing.T) {
 			t.Errorf("nextInColumn(+1) with empty agents = %d, want 0", got)
 		}
 	})
+
+	t.Run("skips empty middle column", func(t *testing.T) {
+		// No WAITING agents — column 1 is empty
+		noWaiting := []*Agent{
+			{ID: "1", Status: StatusIdle},    // col 0
+			{ID: "2", Status: StatusRunning}, // col 2
+			{ID: "3", Status: StatusIdle},    // col 0
+		}
+		m := &Model{agents: noWaiting, selected: 0, columns: 3}
+		// Right from col 0 should skip empty col 1 and land in col 2
+		next := m.nextInColumn(+1)
+		if next != 1 { // agent index 1 is RUNNING in col 2
+			t.Errorf("nextInColumn(+1) skipping empty col1 = %d, want 1", next)
+		}
+		// Left from col 2 should skip empty col 1 and land in col 0
+		m.selected = 1
+		next = m.nextInColumn(-1)
+		if next != 0 {
+			t.Errorf("nextInColumn(-1) skipping empty col1 = %d, want 0", next)
+		}
+	})
 }
 
 func TestCropToHeight(t *testing.T) {

@@ -11,11 +11,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-var version = "dev"
+var version = "0.4.0"
 
 func main() {
 	checkDeps()
-	ensureHooksInstalled()
+	installBackendHooks()
 
 	if len(os.Args) < 2 {
 		runTUI()
@@ -51,8 +51,10 @@ func checkDeps() {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		missing = append(missing, "tmux (brew install tmux)")
 	}
-	if _, err := exec.LookPath("claude"); err != nil {
-		missing = append(missing, "claude (npm install -g @anthropic-ai/claude-code)")
+	for _, b := range AllBackends() {
+		if err := b.CheckDeps(); err != nil {
+			missing = append(missing, err.Error())
+		}
 	}
 	if len(missing) > 0 {
 		fmt.Fprintln(os.Stderr, "TicketTok requires:")
@@ -190,12 +192,13 @@ func cmdKill() {
 }
 
 func cmdDiscover() {
-	found := discoverTmuxClaude()
-	procFound := discoverProcesses()
-	found = append(found, procFound...)
+	var found []DiscoveredAgent
+	for _, b := range AllBackends() {
+		found = append(found, b.Discover()...)
+	}
 
 	if len(found) == 0 {
-		fmt.Println("No running claude instances found.")
+		fmt.Println("No running agent instances found.")
 		return
 	}
 
@@ -225,7 +228,7 @@ func cmdClear() {
 }
 
 func printUsage() {
-	fmt.Println(`TicketTok - Terminal Kanban for Claude Code Agents
+	fmt.Println(`TicketTok - Terminal Kanban for AI Coding Agents
 
 Usage:
   tickettok              Launch the TUI dashboard
@@ -234,7 +237,7 @@ Usage:
                          Spawn an agent headlessly
   tickettok list         List all agents
   tickettok kill <name>  Kill an agent by name or ID
-  tickettok discover     Scan for running claude instances
+  tickettok discover     Scan for running agent instances
   tickettok clear        Remove completed agents
   tickettok help         Show this help
 
@@ -251,6 +254,14 @@ TUI Keybindings:
   Q              Quit
 
 Requires: tmux, claude CLI`)
+}
+
+func installBackendHooks() {
+	for _, b := range AllBackends() {
+		if err := b.InstallHooks(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not install %s hooks: %v\n", b.Name(), err)
+		}
+	}
 }
 
 func shortenPath(p string) string {

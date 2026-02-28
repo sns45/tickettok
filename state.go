@@ -27,6 +27,7 @@ type Agent struct {
 	StatusSince time.Time   `json:"status_since"`
 	SessionName string      `json:"session_name,omitempty"`
 	Discovered  bool        `json:"discovered,omitempty"`
+	BackendID   string      `json:"backend,omitempty"`
 }
 
 type StateFile struct {
@@ -87,6 +88,12 @@ func (s *Store) load() error {
 	if s.agents == nil {
 		s.agents = []*Agent{}
 	}
+	// Migrate: default empty BackendID to "claude"
+	for _, a := range s.agents {
+		if a.BackendID == "" {
+			a.BackendID = "claude"
+		}
+	}
 	return nil
 }
 
@@ -111,6 +118,7 @@ func (s *Store) Add(name, dir string) *Agent {
 		Status:      StatusRunning,
 		CreatedAt:   now,
 		StatusSince: now,
+		BackendID:   DefaultBackend().ID(),
 	}
 	s.nextID++
 	s.agents = append(s.agents, a)
@@ -205,6 +213,14 @@ func (s *Store) UpdateDiscovered(id string, discovered bool) {
 		}
 	}
 	_ = s.save()
+}
+
+// Backend returns the Backend for this agent, falling back to the default.
+func (a *Agent) Backend() Backend {
+	if b := GetBackend(a.BackendID); b != nil {
+		return b
+	}
+	return DefaultBackend()
 }
 
 func (s *Store) ClearDone() int {

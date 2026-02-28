@@ -17,13 +17,14 @@ func NewAgentManager() *AgentManager {
 	}
 }
 
-// SpawnAgent creates a tmux session running claude for the given agent.
+// SpawnAgent creates a tmux session running the agent's backend.
 func (m *AgentManager) SpawnAgent(agent *Agent) error {
 	sessName := SessionName(agent.ID)
 
-	// Always start Claude in interactive mode (not -p one-shot mode)
-	// so the full Ink UI renders and capture-pane can see it.
-	sess, err := CreateSession(sessName, agent.Dir, nil)
+	backend := agent.Backend()
+	command, stripEnv := backend.SpawnCommand(nil)
+
+	sess, err := CreateSession(sessName, agent.Dir, command, stripEnv)
 	if err != nil {
 		return err
 	}
@@ -88,6 +89,8 @@ func (m *AgentManager) GetSession(agent *Agent) *TmuxSession {
 // DetectStatus checks hook-based status first, then falls back to capture-pane scraping.
 // For discovered (external) agents, uses PTY-free capture to avoid detaching the user's terminal.
 func (m *AgentManager) DetectStatus(agent *Agent) AgentStatus {
+	backend := agent.Backend()
+
 	if agent.Discovered {
 		// PTY-free path for external sessions
 		if !IsSessionAlive(agent.SessionName) {
@@ -97,11 +100,11 @@ func (m *AgentManager) DetectStatus(agent *Agent) AgentStatus {
 		if err != nil {
 			return StatusDone
 		}
-		return DetectStatusFromContent(content)
+		return backend.DetectStatus(content)
 	}
 
 	// Try hook-based status first (fast, no subprocess)
-	if status, ok := readHookStatus(agent.ID); ok {
+	if status, ok := backend.ReadHookStatus(agent.ID); ok {
 		return status
 	}
 
@@ -116,7 +119,7 @@ func (m *AgentManager) DetectStatus(agent *Agent) AgentStatus {
 		return StatusDone
 	}
 
-	return DetectStatusFromContent(content)
+	return backend.DetectStatus(content)
 }
 
 // GetPreview returns the last n meaningful output lines from the agent's tmux pane.
@@ -131,7 +134,11 @@ func (m *AgentManager) GetPreview(agent *Agent, n int) []string {
 		return nil
 	}
 
-	return PreviewFromContent(content, n, false)
+	backend := agent.Backend()
+	stripFn := func(lines []string) []string {
+		return backend.StripChrome(lines, false)
+	}
+	return PreviewFromContent(content, n, stripFn)
 }
 
 // PaneInfo holds both preview lines and detected mode from a single pane capture.
@@ -165,9 +172,14 @@ func (m *AgentManager) GetPaneInfo(agent *Agent, n int) PaneInfo {
 		return PaneInfo{}
 	}
 
+	backend := agent.Backend()
+	waiting := agent.Status == StatusWaiting
+	stripFn := func(lines []string) []string {
+		return backend.StripChrome(lines, waiting)
+	}
 	return PaneInfo{
-		Preview: PreviewFromContent(content, n, agent.Status == StatusWaiting),
-		Mode:    DetectModeFromContent(content),
+		Preview: PreviewFromContent(content, n, stripFn),
+		Mode:    backend.DetectMode(content),
 	}
 }
 

@@ -325,16 +325,24 @@ func (m *Model) nextInColumn(delta int) int {
 		}
 	}
 
-	// Target column, clamped
+	// Target column, skipping empty columns in the delta direction
 	maxCol := m.columns - 1
 	targetCol := curCol + delta
-	if targetCol < 0 {
-		targetCol = 0
+	for targetCol >= 0 && targetCol <= maxCol {
+		// Check if any agent lives in this column
+		hasAgent := false
+		for i := 0; i < n; i++ {
+			if cols[i] == targetCol {
+				hasAgent = true
+				break
+			}
+		}
+		if hasAgent {
+			break
+		}
+		targetCol += delta
 	}
-	if targetCol > maxCol {
-		targetCol = maxCol
-	}
-	if targetCol == curCol {
+	if targetCol < 0 || targetCol > maxCol || targetCol == curCol {
 		return m.selected
 	}
 
@@ -854,7 +862,7 @@ func (m *Model) killSelected() {
 	}
 
 	// Clean up hook status file
-	cleanHookStatus(agent.ID)
+	agent.Backend().CleanHookStatus(agent.ID)
 
 	// Remove from store entirely (not just mark DONE)
 	m.store.Remove(agent.ID)
@@ -886,7 +894,10 @@ func (m *Model) refreshStatuses() {
 }
 
 func (m *Model) discoverAgents() {
-	found := discoverTmuxClaude()
+	var found []DiscoveredAgent
+	for _, b := range AllBackends() {
+		found = append(found, b.Discover()...)
+	}
 	before := len(m.agents)
 	m.mergeDiscovered(found)
 	m.agents = m.store.List()
@@ -904,7 +915,7 @@ func (m *Model) discoverAgents() {
 	} else if totalExt > 0 {
 		m.setStatus(fmt.Sprintf("No new agents (%d external tracked)", totalExt))
 	} else {
-		m.setStatus("No external Claude sessions found")
+		m.setStatus("No external agent sessions found")
 	}
 }
 
@@ -1234,7 +1245,7 @@ func (m Model) viewConfirmKill() string {
 
 	warning := "This will destroy the tmux session."
 	if isDiscovered {
-		warning = "This is an external session. Killing it will terminate the Claude instance."
+		warning = "This is an external session. Killing it will terminate the agent instance."
 	}
 
 	content := lipgloss.JoinVertical(lipgloss.Left,
@@ -1287,7 +1298,10 @@ func (m Model) buildCardData() []ui.CardData {
 // discoverCmd runs discovery asynchronously and returns a discoverMsg.
 func discoverCmd() tea.Cmd {
 	return func() tea.Msg {
-		found := discoverTmuxClaude()
+		var found []DiscoveredAgent
+		for _, b := range AllBackends() {
+			found = append(found, b.Discover()...)
+		}
 		return discoverMsg{found: found}
 	}
 }
