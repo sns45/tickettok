@@ -120,8 +120,18 @@ func renderColumnCards(cards []CardData, indices []int, selected, width int) str
 }
 
 // RenderTitle renders the title bar.
-func RenderTitle(width int, agentCount int, mode int) string {
+// updateVersion is shown as a bordered badge next to the title when non-empty (e.g. "0.6.0").
+func RenderTitle(width int, agentCount int, mode int, updateVersion string) string {
 	title := TitleBar.Render("TicketTok")
+
+	if updateVersion != "" {
+		badge := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#d97706")).
+			Bold(true).
+			Render(fmt.Sprintf("(%s available — [U] to update)", updateVersion))
+		title += " " + badge
+	}
+
 	modeStr := fmt.Sprintf("[%d-col]", mode)
 	count := DimText.Render(fmt.Sprintf("%d agents", agentCount))
 	right := lipgloss.JoinHorizontal(lipgloss.Top, count, "  ", DimText.Render(modeStr))
@@ -139,13 +149,17 @@ func RenderTitle(width int, agentCount int, mode int) string {
 }
 
 // RenderFooter renders the keybindings help footer.
-func RenderFooter(width int, mode int) string {
+// When updateAvailable is true, an [U]pdate hint is appended.
+func RenderFooter(width int, mode int, updateAvailable bool) string {
 	var keys string
 	switch mode {
 	case 1:
-		keys = "[↑/↓]Nav  [N]ew  [Enter]Zoom  [X]Kill  [S]end  [D]iscover  [C]lear  [1/2/3]Mode  [Ctrl+Q]uit"
+		keys = "[↑/↓]Nav  [N]ew  [Enter]Zoom  [X]Kill  [S]end  [D]iscover  [C]lear  [1/2/3]Mode  [Q]uit"
 	default:
-		keys = "[↑/↓]Nav  [←/→]Column  [N]ew  [Enter]Zoom  [X]Kill  [S]end  [D]iscover  [C]lear  [1/2/3]Mode  [Ctrl+Q]uit"
+		keys = "[↑/↓]Nav  [←/→]Column  [N]ew  [Enter]Zoom  [X]Kill  [S]end  [D]iscover  [C]lear  [1/2/3]Mode  [Q]uit"
+	}
+	if updateAvailable {
+		keys += "  [U]pdate"
 	}
 	return FooterStyle.Width(width).Render(HelpStyle.Render(keys))
 }

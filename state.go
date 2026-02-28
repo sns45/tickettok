@@ -42,7 +42,8 @@ type Store struct {
 }
 
 func stateDir() string {
-	return filepath.Join(os.Getenv("HOME"), ".tickettok")
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".tickettok")
 }
 
 func statePath() string {

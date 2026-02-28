@@ -5,13 +5,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"text/tabwriter"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-var version = "0.5.0"
+var version = "0.6.0"
 
 func main() {
 	checkDeps()
@@ -49,7 +50,11 @@ func main() {
 func checkDeps() {
 	var missing []string
 	if _, err := exec.LookPath("tmux"); err != nil {
-		missing = append(missing, "tmux (brew install tmux)")
+		hint := "tmux (brew install tmux)"
+		if runtime.GOOS == "linux" {
+			hint = "tmux (apt install tmux)"
+		}
+		missing = append(missing, hint)
 	}
 	for _, b := range AllBackends() {
 		if err := b.CheckDeps(); err != nil {
@@ -80,12 +85,20 @@ func runTUI() {
 		tea.WithMouseCellMotion(),
 	)
 
-	if _, err := p.Run(); err != nil {
+	finalModel, err := p.Run()
+	if err != nil {
 		manager.CloseAll()
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 	manager.CloseAll()
+
+	if fm, ok := finalModel.(Model); ok && fm.shouldReExec {
+		if err := reExec(); err != nil {
+			fmt.Fprintf(os.Stderr, "Restart failed: %v (please relaunch manually)\n", err)
+			os.Exit(1)
+		}
+	}
 }
 
 // cmdAdd spawns an agent headlessly from CLI.
@@ -253,7 +266,7 @@ TUI Keybindings:
   C              Clear completed agents
   Q              Quit
 
-Requires: tmux, claude CLI`)
+Requires: tmux, claude CLI (WSL2 on Windows)`)
 }
 
 func installBackendHooks() {

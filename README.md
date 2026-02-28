@@ -10,8 +10,24 @@ Built with [Go](https://go.dev), [Bubble Tea](https://github.com/charmbracelet/b
 
 ## Prerequisites
 
-- **tmux** — `brew install tmux`
+- **tmux** — `brew install tmux` (macOS) or `sudo apt install tmux` (Linux/WSL2)
 - **Claude CLI** — `npm install -g @anthropic-ai/claude-code`
+
+### Windows (WSL2)
+
+TicketTok requires tmux and Unix PTYs, so it runs inside WSL2 on Windows:
+
+1. Install WSL2: `wsl --install` (from PowerShell as admin, then reboot)
+2. Inside WSL2:
+   ```bash
+   sudo apt update && sudo apt install -y tmux
+   ```
+3. Install [Go](https://go.dev/doc/install) and the [Claude CLI](https://docs.anthropic.com/en/docs/claude-code) inside WSL2
+4. Build and run normally:
+   ```bash
+   go install github.com/sns45/tickettok@latest
+   tickettok
+   ```
 
 ## Install
 

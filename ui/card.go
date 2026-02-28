@@ -54,7 +54,7 @@ func RenderCard(d CardData, width int) string {
 		if len(t) > inner {
 			t = t[:inner-1] + "…"
 		}
-		titleLine = lipgloss.NewStyle().Italic(true).Foreground(ColorAccent).Render("~ " + t)
+		titleLine = lipgloss.NewStyle().Italic(true).Foreground(ColorAccent).Render(t)
 	}
 
 	// Project dir (shortened)
@@ -122,7 +122,7 @@ func RenderCarouselCard(d CardData, width int, previewLines int) string {
 		if len(t) > inner {
 			t = t[:inner-1] + "…"
 		}
-		titleLine = lipgloss.NewStyle().Italic(true).Foreground(ColorAccent).Render("~ " + t)
+		titleLine = lipgloss.NewStyle().Italic(true).Foreground(ColorAccent).Render(t)
 	}
 
 	dir := shortenDir(d.Dir)

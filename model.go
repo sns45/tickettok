@@ -82,6 +82,13 @@ type Model struct {
 
 	// Tick counter for periodic re-discovery
 	tickCount int
+
+	// Update state
+	updateAvailable bool
+	latestVersion   string
+	updateAssetURL  string
+	updating        bool
+	shouldReExec    bool
 }
 
 func initialModel(store *Store, manager *AgentManager) Model {
@@ -115,6 +122,7 @@ func (m Model) Init() tea.Cmd {
 		discoverCmd(),
 		reconcileCmd(m.store),
 		tea.SetWindowTitle("TicketTok"),
+		checkUpdateCmd(),
 	)
 }
 
@@ -159,6 +167,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case reconcileMsg:
 		m.agents = m.store.List()
 		return m, nil
+
+	case updateCheckMsg:
+		if msg.available {
+			m.updateAvailable = true
+			m.latestVersion = msg.latest
+			m.updateAssetURL = msg.assetURL
+		}
+		return m, nil
+
+	case updateDoneMsg:
+		m.updating = false
+		if msg.err != nil {
+			m.setStatus(fmt.Sprintf("Update failed: %v", msg.err))
+			return m, nil
+		}
+		m.shouldReExec = true
+		m.setStatus(fmt.Sprintf("Updated to v%s! Restarting...", msg.version))
+		return m, tea.Tick(500*time.Millisecond, func(time.Time) tea.Msg {
+			return forceQuitMsg{}
+		})
+
+	case forceQuitMsg:
+		return m, tea.Quit
 
 	case zoomTickMsg:
 		if m.view == viewZoom {
@@ -265,6 +296,13 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.setStatus(fmt.Sprintf("Cleared %d completed agents", n))
 		if m.selected >= len(m.agents) && len(m.agents) > 0 {
 			m.selected = len(m.agents) - 1
+		}
+		return m, nil
+	case "u":
+		if m.updateAvailable && !m.updating {
+			m.updating = true
+			m.setStatus(fmt.Sprintf("Downloading v%s...", m.latestVersion))
+			return m, doUpdateCmd(m.updateAssetURL, m.latestVersion)
 		}
 		return m, nil
 	}
@@ -1039,7 +1077,7 @@ func (m Model) View() string {
 }
 
 func (m Model) viewZoom() string {
-	// Header bar
+	// Resolve agent info
 	name := m.zoomAgentID
 	var dir string
 	if m.selected < len(m.agents) {
@@ -1050,34 +1088,38 @@ func (m Model) viewZoom() string {
 			name = title
 		}
 	}
+
+	// Title bar
 	header := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(ui.ColorAccent).
 		Render(fmt.Sprintf(" ZOOM: %s ", name))
-	help := ui.HelpStyle.Render("[Ctrl+Q] return to dashboard")
-	gap := m.width - lipgloss.Width(header) - lipgloss.Width(help) - 1
-	if gap < 1 {
-		gap = 1
-	}
-	topBar := header + strings.Repeat(" ", gap) + help
 	if dir != "" {
-		topBar += "\n" + lipgloss.NewStyle().Foreground(ui.ColorAccent).Render(" "+dir)
+		header += lipgloss.NewStyle().Foreground(ui.ColorDim).Render("  " + dir)
+	}
+	if m.zoomScrollOff > 0 {
+		header += ui.HelpStyle.Render(fmt.Sprintf("  [scrolled +%d lines]", m.zoomScrollOff))
 	}
 
-	// Pane content — show a window into the full scrollback.
-	// zoomScrollOff=0 means "follow bottom" (show latest output).
-	content := m.zoomContent
-	lines := strings.Split(content, "\n")
-	headerLines := 2 // header + dir line
-	if dir == "" {
-		headerLines = 1
-	}
-	maxLines := m.height - headerLines - 1 // -1 for bottom margin
+	// Horizontal rules
+	rule := lipgloss.NewStyle().Foreground(ui.ColorBorder).Render(strings.Repeat("─", m.width))
+
+	// Footer (pinned to bottom, matching dashboard style)
+	footerKeys := ui.HelpStyle.Render("[Ctrl+Q] dashboard  [PgUp/PgDn] scroll")
+	footer := rule + "\n" + " " + footerKeys
+
+	// Calculate content area: total height minus header(1) + top rule(1) + bottom rule(1) + footer text(1)
+	headerHeight := 2 // header line + rule
+	footerHeight := 2 // rule + footer text
+	maxLines := m.height - headerHeight - footerHeight
 	if maxLines < 1 {
 		maxLines = 1
 	}
 
-	// Calculate the visible window
+	// Pane content — show a window into the full scrollback.
+	content := m.zoomContent
+	lines := strings.Split(content, "\n")
+
 	end := len(lines) - m.zoomScrollOff
 	if end < maxLines {
 		end = maxLines
@@ -1090,20 +1132,24 @@ func (m Model) viewZoom() string {
 		start = 0
 	}
 	visible := lines[start:end]
-	body := strings.Join(visible, "\n")
 
-	// Show scroll indicator when not at bottom
-	if m.zoomScrollOff > 0 {
-		indicator := ui.HelpStyle.Render(fmt.Sprintf(" [scrolled +%d lines] ", m.zoomScrollOff))
-		topBar = topBar + "\n" + indicator
+	// Pad body to push footer to bottom
+	for len(visible) < maxLines {
+		visible = append(visible, "")
 	}
 
-	return topBar + "\n" + body
+	body := strings.Join(visible, "\n")
+
+	return header + "\n" + rule + "\n" + body + "\n" + footer
 }
 
 func (m Model) viewBoard() string {
-	title := ui.RenderTitle(m.width, len(m.agents), m.columns)
-	footer := ui.RenderFooter(m.width, m.columns)
+	updateVer := ""
+	if m.updateAvailable && !m.updating {
+		updateVer = m.latestVersion
+	}
+	title := ui.RenderTitle(m.width, len(m.agents), m.columns, updateVer)
+	footer := ui.RenderFooter(m.width, m.columns, m.updateAvailable && !m.updating)
 
 	var status string
 	if m.statusMsg != "" && time.Now().Before(m.statusExpires) {
@@ -1138,8 +1184,12 @@ func (m Model) viewBoard() string {
 }
 
 func (m Model) viewCarousel() string {
-	title := ui.RenderTitle(m.width, len(m.agents), 1)
-	footer := ui.RenderFooter(m.width, 1)
+	updateVer := ""
+	if m.updateAvailable && !m.updating {
+		updateVer = m.latestVersion
+	}
+	title := ui.RenderTitle(m.width, len(m.agents), 1, updateVer)
+	footer := ui.RenderFooter(m.width, 1, m.updateAvailable && !m.updating)
 
 	var status string
 	if m.statusMsg != "" && time.Now().Before(m.statusExpires) {
