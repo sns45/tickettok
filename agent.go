@@ -166,6 +166,7 @@ func (m *AgentManager) GetPreview(agent *Agent, n int) []string {
 type PaneInfo struct {
 	Preview []string
 	Mode    string
+	Title   string
 }
 
 // GetPaneInfo captures the pane once and returns both preview and mode.
@@ -193,6 +194,13 @@ func (m *AgentManager) GetPaneInfo(agent *Agent, n int) PaneInfo {
 		return PaneInfo{}
 	}
 
+	// Read pane title (OSC 2 set by Claude Code)
+	sessName := agent.SessionName
+	if sessName == "" {
+		sessName = SessionName(agent.ID)
+	}
+	title := GetPaneTitle(sessName)
+
 	backend := agent.Backend()
 	waiting := agent.Status == StatusWaiting
 	stripFn := func(lines []string) []string {
@@ -201,6 +209,7 @@ func (m *AgentManager) GetPaneInfo(agent *Agent, n int) PaneInfo {
 	return PaneInfo{
 		Preview: PreviewFromContent(content, n, stripFn),
 		Mode:    backend.DetectMode(content),
+		Title:   title,
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 type CardData struct {
 	Name       string
 	Dir        string
+	Title      string
 	Status     string
 	Mode       string
 	Uptime     time.Duration
@@ -42,6 +43,20 @@ func RenderCard(d CardData, width int) string {
 		header = lipgloss.JoinHorizontal(lipgloss.Top, name, "  ", badge, " ", modeTag)
 	}
 
+	// Reactive subtitle from pane title
+	inner := width - 6 // border + padding
+	if inner < 10 {
+		inner = 10
+	}
+	var titleLine string
+	if d.Title != "" {
+		t := d.Title
+		if len(t) > inner {
+			t = t[:inner-1] + "…"
+		}
+		titleLine = lipgloss.NewStyle().Italic(true).Foreground(ColorAccent).Render("~ " + t)
+	}
+
 	// Project dir (shortened)
 	dir := shortenDir(d.Dir)
 	dirLine := DimText.Render("DIR: " + dir)
@@ -50,10 +65,6 @@ func RenderCard(d CardData, width int) string {
 	uptimeLine := statusTimeLine(d.Status, d.Uptime, d.Since)
 
 	// Separator
-	inner := width - 6 // border + padding
-	if inner < 10 {
-		inner = 10
-	}
 	sep := Separator.Render(strings.Repeat("─", inner))
 
 	// Preview
@@ -74,13 +85,12 @@ func RenderCard(d CardData, width int) string {
 		previewStr = DimText.Render("(no output yet)")
 	}
 
-	content := lipgloss.JoinVertical(lipgloss.Left,
-		header,
-		dirLine,
-		uptimeLine,
-		sep,
-		previewStr,
-	)
+	parts := []string{header}
+	if titleLine != "" {
+		parts = append(parts, titleLine)
+	}
+	parts = append(parts, dirLine, uptimeLine, sep, previewStr)
+	content := lipgloss.JoinVertical(lipgloss.Left, parts...)
 
 	return style.Render(content)
 }
@@ -101,15 +111,25 @@ func RenderCarouselCard(d CardData, width int, previewLines int) string {
 		header = lipgloss.JoinHorizontal(lipgloss.Top, name, "  ", badge, " ", modeTag)
 	}
 
+	// Reactive subtitle from pane title
+	inner := width - 8
+	if inner < 10 {
+		inner = 10
+	}
+	var titleLine string
+	if d.Title != "" {
+		t := d.Title
+		if len(t) > inner {
+			t = t[:inner-1] + "…"
+		}
+		titleLine = lipgloss.NewStyle().Italic(true).Foreground(ColorAccent).Render("~ " + t)
+	}
+
 	dir := shortenDir(d.Dir)
 	dirLine := DimText.Render("PROJECT: " + dir)
 
 	uptimeLine := statusTimeLine(d.Status, d.Uptime, d.Since)
 
-	inner := width - 8
-	if inner < 10 {
-		inner = 10
-	}
 	sep := Separator.Render(strings.Repeat("─", inner))
 
 	// Extended preview
@@ -129,13 +149,12 @@ func RenderCarouselCard(d CardData, width int, previewLines int) string {
 		previewStr = DimText.Render("(no output yet)")
 	}
 
-	content := lipgloss.JoinVertical(lipgloss.Left,
-		header,
-		dirLine,
-		uptimeLine,
-		sep,
-		previewStr,
-	)
+	parts := []string{header}
+	if titleLine != "" {
+		parts = append(parts, titleLine)
+	}
+	parts = append(parts, dirLine, uptimeLine, sep, previewStr)
+	content := lipgloss.JoinVertical(lipgloss.Left, parts...)
 
 	return style.Render(content)
 }

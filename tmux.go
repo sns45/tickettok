@@ -227,6 +227,45 @@ func filteredEnv(stripPrefixes []string) []string {
 	return env
 }
 
+// GetPaneTitle reads the tmux pane title (set by OSC 2 escape sequences).
+// Claude Code emits these to describe what it's working on.
+func GetPaneTitle(sessionName string) string {
+	out, err := exec.Command("tmux", "display-message", "-p",
+		"-t", sessionName, "#{pane_title}").Output()
+	if err != nil {
+		return ""
+	}
+	title := strings.TrimSpace(string(out))
+	// Strip leading dingbat characters (Claude Code spinner: ✢, ✶, ✻, ✳, etc.)
+	title = strings.TrimLeftFunc(title, func(r rune) bool {
+		return r >= '\u2700' && r <= '\u27BF'
+	})
+	title = strings.TrimSpace(title)
+	if isDefaultPaneTitle(title) {
+		return ""
+	}
+	return title
+}
+
+// isDefaultPaneTitle returns true for shell defaults and hostname-like values
+// that aren't meaningful Claude-set titles.
+func isDefaultPaneTitle(s string) bool {
+	if s == "" {
+		return true
+	}
+	lower := strings.ToLower(s)
+	for _, d := range []string{"bash", "zsh", "fish", "sh", "login"} {
+		if lower == d {
+			return true
+		}
+	}
+	// Claude-set titles always contain spaces; single-word short strings are defaults
+	if !strings.Contains(s, " ") && len(s) < 30 {
+		return true
+	}
+	return false
+}
+
 func getCwd(pid int) string {
 	out, err := exec.Command("lsof", "-p", fmt.Sprintf("%d", pid), "-Fn").Output()
 	if err != nil {

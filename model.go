@@ -1041,8 +1041,14 @@ func (m Model) View() string {
 func (m Model) viewZoom() string {
 	// Header bar
 	name := m.zoomAgentID
+	var dir string
 	if m.selected < len(m.agents) {
-		name = m.agents[m.selected].Name
+		agent := m.agents[m.selected]
+		name = agent.Name
+		dir = agent.Dir
+		if title := GetPaneTitle(agent.SessionName); title != "" {
+			name = title
+		}
 	}
 	header := lipgloss.NewStyle().
 		Bold(true).
@@ -1054,12 +1060,19 @@ func (m Model) viewZoom() string {
 		gap = 1
 	}
 	topBar := header + strings.Repeat(" ", gap) + help
+	if dir != "" {
+		topBar += "\n" + lipgloss.NewStyle().Foreground(ui.ColorAccent).Render(" "+dir)
+	}
 
 	// Pane content — show a window into the full scrollback.
 	// zoomScrollOff=0 means "follow bottom" (show latest output).
 	content := m.zoomContent
 	lines := strings.Split(content, "\n")
-	maxLines := m.height - 2 // header + bottom margin
+	headerLines := 2 // header + dir line
+	if dir == "" {
+		headerLines = 1
+	}
+	maxLines := m.height - headerLines - 1 // -1 for bottom margin
 	if maxLines < 1 {
 		maxLines = 1
 	}
@@ -1291,6 +1304,7 @@ func (m Model) buildCardData() []ui.CardData {
 		cards[i] = ui.CardData{
 			Name:       a.Name,
 			Dir:        a.Dir,
+			Title:      info.Title,
 			Status:     string(a.Status),
 			Mode:       info.Mode,
 			Uptime:     now.Sub(a.CreatedAt),
