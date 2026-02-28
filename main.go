@@ -107,6 +107,14 @@ func cmdAdd() {
 		dir = filepath.Join(home, dir[2:])
 	}
 
+	// Create directory if it doesn't exist
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			fmt.Fprintf(os.Stderr, "Cannot create directory: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
 	store, err := NewStore()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)

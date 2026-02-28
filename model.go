@@ -729,6 +729,15 @@ func (m *Model) doSpawn() (tea.Model, tea.Cmd) {
 		dir = filepath.Join(home, dir[2:])
 	}
 
+	// Create directory if it doesn't exist
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			m.setStatus(fmt.Sprintf("Cannot create dir: %v", err))
+			m.view = viewBoard
+			return m, nil
+		}
+	}
+
 	name := deriveNameFromDir(dir)
 
 	agent := m.store.Add(name, dir)
