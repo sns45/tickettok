@@ -39,6 +39,27 @@ func (m *AgentManager) SpawnAgent(agent *Agent) error {
 	return nil
 }
 
+// RespawnAgent re-creates the tmux session for a dead agent, resuming its
+// previous conversation via the backend's ResumeArgs.
+func (m *AgentManager) RespawnAgent(agent *Agent) error {
+	sessName := SessionName(agent.ID)
+
+	backend := agent.Backend()
+	command, stripEnv := backend.SpawnCommand(backend.ResumeArgs())
+
+	sess, err := CreateSession(sessName, agent.Dir, command, stripEnv)
+	if err != nil {
+		return err
+	}
+
+	m.mu.Lock()
+	m.sessions[agent.ID] = sess
+	m.mu.Unlock()
+
+	agent.SessionName = sessName
+	return nil
+}
+
 // Kill destroys the tmux session for the given agent.
 func (m *AgentManager) Kill(id string) error {
 	m.mu.Lock()

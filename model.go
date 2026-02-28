@@ -815,8 +815,16 @@ func (m *Model) enterZoom() (tea.Model, tea.Cmd) {
 
 	sess := m.manager.GetSession(agent)
 	if sess == nil || !sess.IsAlive() {
-		m.setStatus("No active tmux session — spawn a new agent first")
-		return m, nil
+		// Dead session — respawn with --continue to resume the conversation
+		if err := m.manager.RespawnAgent(agent); err != nil {
+			m.setStatus(fmt.Sprintf("Resume error: %v", err))
+			return m, nil
+		}
+		m.store.UpdateSessionName(agent.ID, agent.SessionName)
+		m.store.Update(agent.ID, StatusRunning)
+		m.agents = m.store.List()
+		m.setStatus(fmt.Sprintf("Resumed: %s", agent.Name))
+		sess = m.manager.GetSession(agent)
 	}
 
 	m.zoomAgentID = agent.ID

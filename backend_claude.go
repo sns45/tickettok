@@ -29,6 +29,11 @@ func (c *ClaudeBackend) SpawnCommand(args []string) (string, []string) {
 	return cmd, []string{"CLAUDECODE"}
 }
 
+// ResumeArgs returns the CLI flags to resume the most recent conversation.
+func (c *ClaudeBackend) ResumeArgs() []string {
+	return []string{"--continue"}
+}
+
 // CheckDeps verifies that the claude CLI is installed.
 func (c *ClaudeBackend) CheckDeps() error {
 	if _, err := exec.LookPath("claude"); err != nil {

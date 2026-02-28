@@ -9,6 +9,7 @@ type Backend interface {
 
 	// Spawning
 	SpawnCommand(args []string) (command string, stripEnvVars []string)
+	ResumeArgs() []string // args to pass to SpawnCommand to resume a prior session
 	CheckDeps() error
 
 	// Content analysis (called with ANSI-stripped pane content)
