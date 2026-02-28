@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 // ClaudeBackend implements Backend for Claude Code.
@@ -370,20 +369,9 @@ func (c *ClaudeBackend) discoverProcesses() []DiscoveredAgent {
 
 // --- Hook support ---
 
-// claudeHookStatus represents the JSON written by the hook script.
-type claudeHookStatus struct {
-	State string `json:"state"`
-	Ts    int64  `json:"ts"`
-}
-
 func claudeHookScriptPath() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".tickettok", "tickettok-hook.sh")
-}
-
-func claudeStatusDir() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".tickettok", "status")
 }
 
 // InstallHooks installs the hook script and registers hooks in Claude's settings.json.
@@ -550,48 +538,10 @@ func (c *ClaudeBackend) alreadyInstalled(settings map[string]interface{}) bool {
 
 // ReadHookStatus reads the hook-written status file for an agent.
 func (c *ClaudeBackend) ReadHookStatus(agentID string) (AgentStatus, bool) {
-	path := filepath.Join(claudeStatusDir(), agentID+".json")
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", false
-	}
-
-	var hs claudeHookStatus
-	if err := json.Unmarshal(data, &hs); err != nil {
-		return "", false
-	}
-
-	age := time.Now().Unix() - hs.Ts
-
-	switch hs.State {
-	case "RUNNING":
-		if age > 30 {
-			return "", false
-		}
-		return StatusRunning, true
-	case "WAITING":
-		if age > 300 {
-			return "", false
-		}
-		return StatusWaiting, true
-	case "IDLE":
-		if age > 300 {
-			return "", false
-		}
-		return StatusIdle, true
-	case "DONE":
-		if age > 300 {
-			return "", false
-		}
-		return StatusDone, true
-	default:
-		return "", false
-	}
+	return readHookStatusFile(agentID)
 }
 
 // CleanHookStatus removes the status file for an agent.
 func (c *ClaudeBackend) CleanHookStatus(agentID string) {
-	path := filepath.Join(claudeStatusDir(), agentID+".json")
-	_ = os.Remove(path)
+	cleanHookStatusFile(agentID)
 }

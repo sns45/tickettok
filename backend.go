@@ -1,6 +1,12 @@
 package main
 
-import "sync"
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+)
 
 // Backend defines the contract for an AI coding agent backend.
 type Backend interface {
@@ -67,4 +73,78 @@ func AllBackends() []Backend {
 		out = append(out, b)
 	}
 	return out
+}
+
+// AvailableBackends returns only backends whose CLI is installed.
+func AvailableBackends() []Backend {
+	var avail []Backend
+	for _, b := range AllBackends() {
+		if b.CheckDeps() == nil {
+			avail = append(avail, b)
+		}
+	}
+	return avail
+}
+
+// --- Shared hook status helpers ---
+
+// hookStatusDir returns the shared status directory for all backends.
+func hookStatusDir() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".tickettok", "status")
+}
+
+// hookStatus represents the JSON written by hook scripts (all backends use the same format).
+type hookStatus struct {
+	State string `json:"state"`
+	Ts    int64  `json:"ts"`
+}
+
+// readHookStatusFile reads and parses a hook-written status file for an agent.
+// Returns the detected status and true if valid, or ("", false) if missing/expired.
+func readHookStatusFile(agentID string) (AgentStatus, bool) {
+	path := filepath.Join(hookStatusDir(), agentID+".json")
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", false
+	}
+
+	var hs hookStatus
+	if err := json.Unmarshal(data, &hs); err != nil {
+		return "", false
+	}
+
+	age := time.Now().Unix() - hs.Ts
+
+	switch hs.State {
+	case "RUNNING":
+		if age > 30 {
+			return "", false
+		}
+		return StatusRunning, true
+	case "WAITING":
+		if age > 300 {
+			return "", false
+		}
+		return StatusWaiting, true
+	case "IDLE":
+		if age > 300 {
+			return "", false
+		}
+		return StatusIdle, true
+	case "DONE":
+		if age > 300 {
+			return "", false
+		}
+		return StatusDone, true
+	default:
+		return "", false
+	}
+}
+
+// cleanHookStatusFile removes the status file for an agent.
+func cleanHookStatusFile(agentID string) {
+	path := filepath.Join(hookStatusDir(), agentID+".json")
+	_ = os.Remove(path)
 }
