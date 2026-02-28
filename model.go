@@ -956,9 +956,6 @@ func listSubdirs(dir string) []string {
 		dirs = append(dirs, collapseTilde(full))
 	}
 	sort.Strings(dirs)
-	if len(dirs) > 20 {
-		dirs = dirs[:20]
-	}
 	return dirs
 }
 
@@ -985,8 +982,12 @@ func (m *Model) refreshSpawnSuggestions() {
 
 	all := listSubdirs(baseDir)
 	if partial == "" {
+		// No partial typed — show first batch only (display caps at 8 visible)
 		m.spawnSuggestions = all
-	} else {
+		m.spawnSelIdx = -1
+		return
+	}
+	{
 		lowerPartial := strings.ToLower(partial)
 		var filtered []string
 		for _, s := range all {
