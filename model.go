@@ -34,6 +34,14 @@ const (
 	viewConfirmKill
 )
 
+// spawnFocus tracks which section of the spawn dialog has focus.
+type spawnFocus int
+
+const (
+	focusBackend spawnFocus = iota // arrow keys change backend selection
+	focusDir                       // typing goes to textinput, arrows navigate suggestions
+)
+
 // tickMsg is sent periodically to refresh status.
 type tickMsg time.Time
 
@@ -58,9 +66,12 @@ type Model struct {
 	height   int
 
 	// Spawn dialog fields
-	spawnDir        textinput.Model
-	spawnSuggestions []string // filtered directory matches
-	spawnSelIdx     int      // selected suggestion index (-1 = none)
+	spawnDir         textinput.Model
+	spawnSuggestions []string  // filtered directory matches
+	spawnSelIdx      int       // selected suggestion index (-1 = none)
+	spawnBackends    []Backend // available backends (populated on dialog open)
+	spawnBackendIdx  int       // currently selected backend index
+	spawnFocus       spawnFocus // focusBackend or focusDir
 
 	// Send dialog
 	sendInput textinput.Model
@@ -667,44 +678,110 @@ func (m *Model) forwardKeyToTmux(msg tea.KeyMsg) {
 
 func (m *Model) handleSpawnKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
-	switch key {
-	case "esc":
+
+	// Esc always exits
+	if key == "esc" {
 		m.view = viewBoard
 		if m.columns == 1 {
 			m.view = viewCarousel
 		}
 		return m, nil
-	case "tab", "down":
-		// Move selection down in suggestions
-		if len(m.spawnSuggestions) > 0 {
-			m.spawnSelIdx++
-			if m.spawnSelIdx >= len(m.spawnSuggestions) {
-				m.spawnSelIdx = 0
-			}
+	}
+
+	if m.spawnFocus == focusBackend {
+		return m.handleSpawnBackendKey(msg)
+	}
+	return m.handleSpawnDirKey(msg)
+}
+
+func (m *Model) handleSpawnBackendKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	switch key {
+	case "up":
+		if m.spawnBackendIdx > 0 {
+			m.spawnBackendIdx--
 		}
 		return m, nil
-	case "shift+tab", "up":
-		// Move selection up in suggestions
-		if len(m.spawnSuggestions) > 0 {
-			m.spawnSelIdx--
-			if m.spawnSelIdx < 0 {
-				m.spawnSelIdx = len(m.spawnSuggestions) - 1
-			}
+	case "down":
+		if m.spawnBackendIdx < len(m.spawnBackends)-1 {
+			m.spawnBackendIdx++
+		} else {
+			// Past last backend → switch to directory
+			m.spawnFocus = focusDir
+			m.spawnDir.Focus()
 		}
 		return m, nil
 	case "enter":
-		// If a suggestion is selected, apply it and drill deeper
-		if m.spawnSelIdx >= 0 && m.spawnSelIdx < len(m.spawnSuggestions) {
-			sel := m.spawnSuggestions[m.spawnSelIdx]
-			m.spawnDir.SetValue(sel + "/")
-			m.spawnDir.CursorEnd()
-			m.spawnSelIdx = -1
-			m.refreshSpawnSuggestions()
+		m.spawnFocus = focusDir
+		m.spawnDir.Focus()
+		return m, nil
+	}
+	// Any rune key → switch to dir and forward to textinput
+	if msg.Type == tea.KeyRunes {
+		m.spawnFocus = focusDir
+		m.spawnDir.Focus()
+		var cmd tea.Cmd
+		m.spawnDir, cmd = m.spawnDir.Update(msg)
+		m.refreshSpawnSuggestions()
+		return m, cmd
+	}
+	return m, nil
+}
+
+func (m *Model) handleSpawnDirKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+
+	if m.spawnSelIdx == -1 {
+		// Text input focused (no suggestion highlighted)
+		switch key {
+		case "up":
+			if len(m.spawnBackends) > 1 {
+				m.spawnFocus = focusBackend
+				m.spawnDir.Blur()
+				m.spawnBackendIdx = len(m.spawnBackends) - 1
+			}
+			return m, nil
+		case "down", "tab":
+			if len(m.spawnSuggestions) > 0 {
+				m.spawnSelIdx = 0
+			}
+			return m, nil
+		case "enter":
+			return m.doSpawn()
+		}
+	} else {
+		// Suggestion highlighted
+		switch key {
+		case "up":
+			m.spawnSelIdx--
+			// If goes to -1, back to text input (stays in focusDir)
+			return m, nil
+		case "down":
+			if m.spawnSelIdx < len(m.spawnSuggestions)-1 {
+				m.spawnSelIdx++
+			}
+			return m, nil
+		case "enter":
+			if m.spawnSelIdx >= 0 && m.spawnSelIdx < len(m.spawnSuggestions) {
+				sel := m.spawnSuggestions[m.spawnSelIdx]
+				m.spawnDir.SetValue(sel + "/")
+				m.spawnDir.CursorEnd()
+				m.spawnSelIdx = -1
+				m.refreshSpawnSuggestions()
+			}
 			return m, nil
 		}
-		// No selection — spawn
-		return m.doSpawn()
+		// Any rune key → reset selection, forward to textinput
+		if msg.Type == tea.KeyRunes {
+			m.spawnSelIdx = -1
+			var cmd tea.Cmd
+			m.spawnDir, cmd = m.spawnDir.Update(msg)
+			m.refreshSpawnSuggestions()
+			return m, cmd
+		}
+		return m, nil
 	}
+
 	// Forward other keys to textinput, then refresh suggestions
 	var cmd tea.Cmd
 	m.spawnDir, cmd = m.spawnDir.Update(msg)
@@ -751,6 +828,10 @@ func (m *Model) openSpawnDialog() {
 	m.spawnDir.SetValue("~/dev/")
 	m.spawnDir.CursorEnd()
 	m.spawnDir.Focus()
+	m.spawnBackends = AvailableBackends()
+	m.spawnBackendIdx = 0
+	m.spawnFocus = focusDir
+	m.spawnSelIdx = -1
 	m.refreshSpawnSuggestions()
 }
 
@@ -787,6 +868,10 @@ func (m *Model) doSpawn() (tea.Model, tea.Cmd) {
 	name := deriveNameFromDir(dir)
 
 	agent := m.store.Add(name, dir)
+	// Set backend from spawn dialog selection
+	if len(m.spawnBackends) > 0 && m.spawnBackendIdx < len(m.spawnBackends) {
+		agent.BackendID = m.spawnBackends[m.spawnBackendIdx].ID()
+	}
 	if err := m.manager.SpawnAgent(agent); err != nil {
 		m.setStatus(fmt.Sprintf("Spawn error: %v", err))
 	} else {
@@ -1232,6 +1317,27 @@ func (m Model) viewSpawn() string {
 
 	title := ui.AgentName.Render("Spawn New Agent")
 
+	// Render backend selector (vertical radio-style list)
+	var backendLines []string
+	if len(m.spawnBackends) > 1 {
+		backendLines = append(backendLines, "Backend:")
+		for i, b := range m.spawnBackends {
+			indicator := "○"
+			style := lipgloss.NewStyle().Foreground(ui.ColorDim)
+			if i == m.spawnBackendIdx {
+				indicator = "●"
+				style = lipgloss.NewStyle().Foreground(ui.ColorAccent).Bold(true)
+			}
+			prefix := "  "
+			if m.spawnFocus == focusBackend && i == m.spawnBackendIdx {
+				prefix = "> "
+			}
+			backendLines = append(backendLines, style.Render(prefix+indicator+" "+b.Name()))
+		}
+	} else if len(m.spawnBackends) == 1 {
+		backendLines = append(backendLines, "Backend:  "+m.spawnBackends[0].Name())
+	}
+
 	fields := lipgloss.JoinVertical(lipgloss.Left,
 		"Directory:", m.spawnDir.View(),
 	)
@@ -1256,15 +1362,15 @@ func (m Model) viewSpawn() string {
 	}
 	suggestions := strings.Join(suggLines, "\n")
 
-	var help string
-	if len(m.spawnSuggestions) > 0 {
-		help = ui.HelpStyle.Render("[Enter] select  [Tab/↓] next  [Esc] cancel")
-	} else {
-		help = ui.HelpStyle.Render("[Enter] spawn  [Esc] cancel")
-	}
+	help := ui.HelpStyle.Render("[Enter] select/spawn  [↑/↓] navigate  [Esc] cancel")
 
 	var parts []string
-	parts = append(parts, title, "", fields)
+	parts = append(parts, title, "")
+	if len(backendLines) > 0 {
+		parts = append(parts, backendLines...)
+		parts = append(parts, "")
+	}
+	parts = append(parts, fields)
 	if suggestions != "" {
 		parts = append(parts, suggestions)
 	}

@@ -12,7 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-var version = "0.6.0"
+var version = "0.7.0"
 
 func main() {
 	checkDeps()
@@ -48,24 +48,28 @@ func main() {
 }
 
 func checkDeps() {
-	var missing []string
+	// tmux is always required
 	if _, err := exec.LookPath("tmux"); err != nil {
 		hint := "tmux (brew install tmux)"
 		if runtime.GOOS == "linux" {
 			hint = "tmux (apt install tmux)"
 		}
-		missing = append(missing, hint)
+		fmt.Fprintln(os.Stderr, "TicketTok requires:")
+		fmt.Fprintf(os.Stderr, "  %s\n", hint)
+		os.Exit(1)
 	}
+
+	// Check backends — warn about missing, fatal if none available
+	var available int
 	for _, b := range AllBackends() {
 		if err := b.CheckDeps(); err != nil {
-			missing = append(missing, err.Error())
+			fmt.Fprintf(os.Stderr, "  [optional] %s not found: %s\n", b.Name(), err)
+		} else {
+			available++
 		}
 	}
-	if len(missing) > 0 {
-		fmt.Fprintln(os.Stderr, "TicketTok requires:")
-		for _, m := range missing {
-			fmt.Fprintf(os.Stderr, "  %s\n", m)
-		}
+	if available == 0 {
+		fmt.Fprintln(os.Stderr, "At least one agent CLI is required (claude, codex, or gemini)")
 		os.Exit(1)
 	}
 }
@@ -266,7 +270,7 @@ TUI Keybindings:
   C              Clear completed agents
   Q              Quit
 
-Requires: tmux, claude CLI (WSL2 on Windows)`)
+Requires: tmux + at least one agent CLI (claude, codex, or gemini)`)
 }
 
 func installBackendHooks() {
