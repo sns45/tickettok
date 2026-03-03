@@ -33,6 +33,11 @@ func (g *GeminiBackend) ResumeArgs() []string {
 	return nil
 }
 
+// AutoApproveArgs returns nil — Gemini CLI has no known auto-approve flag.
+func (g *GeminiBackend) AutoApproveArgs() []string {
+	return nil
+}
+
 // CheckDeps verifies that the gemini CLI is installed.
 func (g *GeminiBackend) CheckDeps() error {
 	if _, err := exec.LookPath("gemini"); err != nil {

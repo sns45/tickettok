@@ -18,11 +18,11 @@ func NewAgentManager() *AgentManager {
 }
 
 // SpawnAgent creates a tmux session running the agent's backend.
-func (m *AgentManager) SpawnAgent(agent *Agent) error {
+func (m *AgentManager) SpawnAgent(agent *Agent, extraArgs []string) error {
 	sessName := SessionName(agent.ID)
 
 	backend := agent.Backend()
-	command, stripEnv := backend.SpawnCommand(nil)
+	command, stripEnv := backend.SpawnCommand(extraArgs)
 
 	sess, err := CreateSession(sessName, agent.Dir, command, stripEnv)
 	if err != nil {
@@ -45,7 +45,11 @@ func (m *AgentManager) RespawnAgent(agent *Agent) error {
 	sessName := SessionName(agent.ID)
 
 	backend := agent.Backend()
-	command, stripEnv := backend.SpawnCommand(backend.ResumeArgs())
+	args := backend.ResumeArgs()
+	if agent.AutoApprove {
+		args = append(args, backend.AutoApproveArgs()...)
+	}
+	command, stripEnv := backend.SpawnCommand(args)
 
 	sess, err := CreateSession(sessName, agent.Dir, command, stripEnv)
 	if err != nil {

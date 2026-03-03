@@ -28,6 +28,7 @@ type Agent struct {
 	SessionName string      `json:"session_name,omitempty"`
 	Discovered  bool        `json:"discovered,omitempty"`
 	BackendID   string      `json:"backend,omitempty"`
+	AutoApprove bool        `json:"auto_approve,omitempty"`
 }
 
 type StateFile struct {

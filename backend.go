@@ -15,7 +15,8 @@ type Backend interface {
 
 	// Spawning
 	SpawnCommand(args []string) (command string, stripEnvVars []string)
-	ResumeArgs() []string // args to pass to SpawnCommand to resume a prior session
+	ResumeArgs() []string       // args to pass to SpawnCommand to resume a prior session
+	AutoApproveArgs() []string  // CLI flags to skip permission prompts, or nil if unsupported
 	CheckDeps() error
 
 	// Content analysis (called with ANSI-stripped pane content)

@@ -12,7 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-var version = "0.7.0"
+var version = "0.8.0"
 
 func main() {
 	checkDeps()
@@ -147,7 +147,7 @@ func cmdAdd() {
 	}
 
 	agent := store.Add(name, dir)
-	if err := manager.SpawnAgent(agent); err != nil {
+	if err := manager.SpawnAgent(agent, nil); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to spawn agent: %v\n", err)
 		os.Exit(1)
 	}

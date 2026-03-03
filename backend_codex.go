@@ -32,6 +32,11 @@ func (c *CodexBackend) ResumeArgs() []string {
 	return nil
 }
 
+// AutoApproveArgs returns the flag for full-auto approval mode.
+func (c *CodexBackend) AutoApproveArgs() []string {
+	return []string{"--approval-mode", "full-auto"}
+}
+
 // CheckDeps verifies that the codex CLI is installed.
 func (c *CodexBackend) CheckDeps() error {
 	if _, err := exec.LookPath("codex"); err != nil {

@@ -33,6 +33,11 @@ func (c *ClaudeBackend) ResumeArgs() []string {
 	return []string{"--continue"}
 }
 
+// AutoApproveArgs returns the flag to bypass all permission prompts.
+func (c *ClaudeBackend) AutoApproveArgs() []string {
+	return []string{"--dangerously-skip-permissions"}
+}
+
 // CheckDeps verifies that the claude CLI is installed.
 func (c *ClaudeBackend) CheckDeps() error {
 	if _, err := exec.LookPath("claude"); err != nil {

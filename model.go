@@ -40,6 +40,7 @@ type spawnFocus int
 const (
 	focusBackend spawnFocus = iota // arrow keys change backend selection
 	focusDir                       // typing goes to textinput, arrows navigate suggestions
+	focusApprove                   // auto-approve toggle
 )
 
 // tickMsg is sent periodically to refresh status.
@@ -71,7 +72,8 @@ type Model struct {
 	spawnSelIdx      int       // selected suggestion index (-1 = none)
 	spawnBackends    []Backend // available backends (populated on dialog open)
 	spawnBackendIdx  int       // currently selected backend index
-	spawnFocus       spawnFocus // focusBackend or focusDir
+	spawnFocus       spawnFocus // focusBackend, focusDir, or focusApprove
+	spawnAutoApprove bool       // toggle: bypass permission checks
 
 	// Send dialog
 	sendInput textinput.Model
@@ -719,6 +721,9 @@ func (m *Model) handleSpawnKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.spawnFocus == focusBackend {
 		return m.handleSpawnBackendKey(msg)
 	}
+	if m.spawnFocus == focusApprove {
+		return m.handleSpawnApproveKey(msg)
+	}
 	return m.handleSpawnDirKey(msg)
 }
 
@@ -772,6 +777,9 @@ func (m *Model) handleSpawnDirKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "down", "tab":
 			if len(m.spawnSuggestions) > 0 {
 				m.spawnSelIdx = 0
+			} else if m.spawnSelectedBackendSupportsAutoApprove() {
+				m.spawnFocus = focusApprove
+				m.spawnDir.Blur()
 			}
 			return m, nil
 		case "enter":
@@ -787,6 +795,11 @@ func (m *Model) handleSpawnDirKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "down":
 			if m.spawnSelIdx < len(m.spawnSuggestions)-1 {
 				m.spawnSelIdx++
+			} else if m.spawnSelectedBackendSupportsAutoApprove() {
+				// Past last suggestion → move to approve toggle
+				m.spawnFocus = focusApprove
+				m.spawnDir.Blur()
+				m.spawnSelIdx = -1
 			}
 			return m, nil
 		case "enter":
@@ -815,6 +828,38 @@ func (m *Model) handleSpawnDirKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.spawnDir, cmd = m.spawnDir.Update(msg)
 	m.refreshSpawnSuggestions()
 	return m, cmd
+}
+
+func (m *Model) handleSpawnApproveKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	switch key {
+	case "up":
+		m.spawnFocus = focusDir
+		m.spawnDir.Focus()
+		// If there are suggestions, select the last one
+		if len(m.spawnSuggestions) > 0 {
+			m.spawnSelIdx = len(m.spawnSuggestions) - 1
+			if m.spawnSelIdx > 7 {
+				m.spawnSelIdx = 7 // max visible
+			}
+		}
+		return m, nil
+	case " ":
+		m.spawnAutoApprove = !m.spawnAutoApprove
+		return m, nil
+	case "enter":
+		return m.doSpawn()
+	}
+	// Any rune key → switch to dir input and forward
+	if msg.Type == tea.KeyRunes {
+		m.spawnFocus = focusDir
+		m.spawnDir.Focus()
+		var cmd tea.Cmd
+		m.spawnDir, cmd = m.spawnDir.Update(msg)
+		m.refreshSpawnSuggestions()
+		return m, cmd
+	}
+	return m, nil
 }
 
 func (m *Model) handleSendKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -860,6 +905,7 @@ func (m *Model) openSpawnDialog() {
 	m.spawnBackendIdx = 0
 	m.spawnFocus = focusDir
 	m.spawnSelIdx = -1
+	m.spawnAutoApprove = false
 	m.refreshSpawnSuggestions()
 }
 
@@ -900,7 +946,12 @@ func (m *Model) doSpawn() (tea.Model, tea.Cmd) {
 	if len(m.spawnBackends) > 0 && m.spawnBackendIdx < len(m.spawnBackends) {
 		agent.BackendID = m.spawnBackends[m.spawnBackendIdx].ID()
 	}
-	if err := m.manager.SpawnAgent(agent); err != nil {
+	agent.AutoApprove = m.spawnAutoApprove
+	var spawnArgs []string
+	if agent.AutoApprove {
+		spawnArgs = agent.Backend().AutoApproveArgs()
+	}
+	if err := m.manager.SpawnAgent(agent, spawnArgs); err != nil {
 		m.setStatus(fmt.Sprintf("Spawn error: %v", err))
 	} else {
 		m.store.UpdateSessionName(agent.ID, agent.SessionName)
@@ -1171,6 +1222,15 @@ func (m *Model) refreshSpawnSuggestions() {
 	m.spawnSelIdx = -1
 }
 
+// spawnSelectedBackendSupportsAutoApprove returns true if the currently selected
+// backend has auto-approve CLI args.
+func (m Model) spawnSelectedBackendSupportsAutoApprove() bool {
+	if len(m.spawnBackends) > 0 && m.spawnBackendIdx < len(m.spawnBackends) {
+		return len(m.spawnBackends[m.spawnBackendIdx].AutoApproveArgs()) > 0
+	}
+	return false
+}
+
 // View renders the full UI.
 func (m Model) View() string {
 	switch m.view {
@@ -1402,6 +1462,23 @@ func (m Model) viewSpawn() string {
 	if suggestions != "" {
 		parts = append(parts, suggestions)
 	}
+
+	// Auto-approve toggle (only shown if backend supports it)
+	if m.spawnSelectedBackendSupportsAutoApprove() {
+		checkmark := "\u2610" // ☐
+		if m.spawnAutoApprove {
+			checkmark = "\u2611" // ☑
+		}
+		approveStyle := lipgloss.NewStyle().Foreground(ui.ColorDim)
+		approvePrefix := "  "
+		if m.spawnFocus == focusApprove {
+			approveStyle = lipgloss.NewStyle().Foreground(ui.ColorAccent).Bold(true)
+			approvePrefix = "> "
+		}
+		approveLine := approveStyle.Render(approvePrefix + checkmark + " Auto-approve (skip permissions)")
+		parts = append(parts, "", approveLine)
+	}
+
 	parts = append(parts, "", help)
 
 	content := lipgloss.JoinVertical(lipgloss.Left, parts...)
