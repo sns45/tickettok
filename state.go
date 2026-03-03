@@ -99,6 +99,13 @@ func (s *Store) load() error {
 	return nil
 }
 
+// Save persists the current state to disk.
+func (s *Store) Save() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_ = s.save()
+}
+
 func (s *Store) save() error {
 	sf := StateFile{Agents: s.agents}
 	data, err := json.MarshalIndent(sf, "", "  ")

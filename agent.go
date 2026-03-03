@@ -1,8 +1,10 @@
 package main
 
 import (
+	"os/exec"
 	"strings"
 	"sync"
+	"time"
 )
 
 // AgentManager tracks tmux sessions for all agents.
@@ -233,6 +235,14 @@ func (m *AgentManager) CloseAll() {
 	for _, sess := range m.sessions {
 		sess.closePty()
 	}
+}
+
+// SendPromptAfterDelay waits for the agent to start up, then sends the
+// initial prompt via tmux send-keys. Designed for fire-and-forget use from
+// CLI commands that don't keep an AgentManager alive.
+func SendPromptAfterDelay(sessionName, prompt string) {
+	time.Sleep(4 * time.Second)
+	exec.Command("tmux", "send-keys", "-t", sessionName, prompt, "Enter").Run()
 }
 
 // shellQuote wraps a string in single quotes for shell safety.
