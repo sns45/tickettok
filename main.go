@@ -12,7 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-var version = "0.9.0"
+var version = "0.10.0"
 
 func main() {
 	checkDeps()
@@ -40,6 +40,8 @@ func main() {
 		cmdDiscover()
 	case "clear":
 		cmdClear()
+	case "workspace", "ws":
+		cmdWorkspace()
 	case "version", "--version", "-v":
 		fmt.Println("tickettok " + version)
 	case "help", "--help", "-h":
@@ -401,6 +403,14 @@ Usage:
   tickettok kill <name>  Kill an agent by name or ID
   tickettok discover     Scan for running agent instances
   tickettok clear        Remove completed agents
+  tickettok workspace save <name>          Save current agents as workspace
+  tickettok workspace load <name>          Clear current + spawn workspace agents
+  tickettok workspace add <name>           Spawn workspace agents alongside current
+  tickettok workspace list                 List saved workspaces
+  tickettok workspace create <name>        Create empty workspace
+  tickettok workspace delete <name>        Delete saved workspace
+  tickettok workspace agent <ws> <dir> [flags]
+                                           Add agent template to workspace
   tickettok help         Show this help
 
 TUI Keybindings:
@@ -408,6 +418,7 @@ TUI Keybindings:
   ←/→ or h/l    Cycle agents (carousel mode)
   1/2/3          Switch column mode
   N              Spawn new agent
+  W              Workspace manager
   Enter          Zoom into agent (Ctrl+Q to return)
   S              Send message to agent
   K              Kill selected agent
@@ -416,6 +427,192 @@ TUI Keybindings:
   Q              Quit
 
 Requires: tmux + at least one agent CLI (claude, codex, or gemini)`)
+}
+
+func cmdWorkspace() {
+	if len(os.Args) < 3 {
+		fmt.Fprintln(os.Stderr, "Usage: tickettok workspace <save|load|add|list|create|delete|agent> ...")
+		os.Exit(1)
+	}
+
+	sub := os.Args[2]
+
+	switch sub {
+	case "save":
+		if len(os.Args) < 4 {
+			fmt.Fprintln(os.Stderr, "Usage: tickettok workspace save <name>")
+			os.Exit(1)
+		}
+		name := os.Args[3]
+		store, err := NewStore()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		agents := store.List()
+		if err := SaveWorkspace(name, agents); err != nil {
+			fmt.Fprintf(os.Stderr, "Error saving workspace: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Saved workspace %q with %d agent(s).\n", name, len(agents))
+
+	case "load":
+		if len(os.Args) < 4 {
+			fmt.Fprintln(os.Stderr, "Usage: tickettok workspace load <name>")
+			os.Exit(1)
+		}
+		name := os.Args[3]
+		wf, err := LoadWorkspace(name)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		store, err := NewStore()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		// Kill all current agents
+		for _, a := range store.List() {
+			if a.SessionName != "" {
+				_ = KillBySession(a.SessionName)
+			}
+			a.Backend().CleanHookStatus(a.ID)
+			store.Remove(a.ID)
+		}
+		manager := NewAgentManager()
+		count := spawnWorkspaceAgents(wf, store, manager)
+		fmt.Printf("Loaded workspace %q: spawned %d agent(s).\n", name, count)
+
+	case "add":
+		if len(os.Args) < 4 {
+			fmt.Fprintln(os.Stderr, "Usage: tickettok workspace add <name>")
+			os.Exit(1)
+		}
+		name := os.Args[3]
+		wf, err := LoadWorkspace(name)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		store, err := NewStore()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		manager := NewAgentManager()
+		count := spawnWorkspaceAgents(wf, store, manager)
+		fmt.Printf("Added workspace %q: spawned %d agent(s).\n", name, count)
+
+	case "list":
+		names, err := ListWorkspaces()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		if len(names) == 0 {
+			fmt.Println("No saved workspaces.")
+			return
+		}
+		w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(w, "NAME\tAGENTS\tCREATED")
+		for _, n := range names {
+			wf, err := LoadWorkspace(n)
+			if err != nil {
+				continue
+			}
+			fmt.Fprintf(w, "%s\t%d\t%s\n", n, len(wf.Agents), wf.CreatedAt.Format("2006-01-02 15:04"))
+		}
+		w.Flush()
+
+	case "create":
+		if len(os.Args) < 4 {
+			fmt.Fprintln(os.Stderr, "Usage: tickettok workspace create <name>")
+			os.Exit(1)
+		}
+		name := os.Args[3]
+		if WorkspaceExists(name) {
+			fmt.Fprintf(os.Stderr, "Workspace %q already exists.\n", name)
+			os.Exit(1)
+		}
+		if err := SaveWorkspace(name, nil); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Created empty workspace %q.\n", name)
+
+	case "delete":
+		if len(os.Args) < 4 {
+			fmt.Fprintln(os.Stderr, "Usage: tickettok workspace delete <name>")
+			os.Exit(1)
+		}
+		name := os.Args[3]
+		if err := DeleteWorkspace(name); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Deleted workspace %q.\n", name)
+
+	case "agent":
+		if len(os.Args) < 5 {
+			fmt.Fprintln(os.Stderr, "Usage: tickettok workspace agent <workspace> <dir> [--name <name>] [--backend <id>] [--auto-approve]")
+			os.Exit(1)
+		}
+		wsName := os.Args[3]
+		dir := os.Args[4]
+
+		agentName := ""
+		backendID := ""
+		autoApprove := false
+
+		for i := 5; i < len(os.Args); i++ {
+			switch os.Args[i] {
+			case "--name":
+				if i+1 < len(os.Args) {
+					agentName = os.Args[i+1]
+					i++
+				}
+			case "--backend":
+				if i+1 < len(os.Args) {
+					backendID = os.Args[i+1]
+					i++
+				}
+			case "--auto-approve":
+				autoApprove = true
+			}
+		}
+
+		if strings.HasPrefix(dir, "~/") {
+			home, _ := os.UserHomeDir()
+			dir = filepath.Join(home, dir[2:])
+		}
+
+		if agentName == "" {
+			agentName = deriveNameFromDir(dir)
+		}
+
+		if !WorkspaceExists(wsName) {
+			fmt.Fprintf(os.Stderr, "Workspace %q does not exist. Create it first with: tickettok workspace create %s\n", wsName, wsName)
+			os.Exit(1)
+		}
+
+		wa := WorkspaceAgent{
+			Name:        agentName,
+			Dir:         dir,
+			BackendID:   backendID,
+			AutoApprove: autoApprove,
+		}
+		if err := AddAgentToWorkspace(wsName, wa); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Added agent %q to workspace %q.\n", agentName, wsName)
+
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown workspace command: %s\n", sub)
+		fmt.Fprintln(os.Stderr, "Usage: tickettok workspace <save|load|add|list|create|delete|agent> ...")
+		os.Exit(1)
+	}
 }
 
 func installBackendHooks() {

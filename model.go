@@ -32,6 +32,7 @@ const (
 	viewSpawn
 	viewSend
 	viewConfirmKill
+	viewWorkspace
 )
 
 // spawnFocus tracks which section of the spawn dialog has focus.
@@ -105,6 +106,12 @@ type Model struct {
 	updateAssetURL  string
 	updating        bool
 	shouldReExec    bool
+
+	// Workspace dialog
+	wsNames     []string        // cached workspace names
+	wsSelected  int             // selected index in list
+	wsSaveMode  bool            // true = typing name to save
+	wsNameInput textinput.Model // text input for save-as name
 }
 
 func initialModel(store *Store, manager *AgentManager) Model {
@@ -118,16 +125,22 @@ func initialModel(store *Store, manager *AgentManager) Model {
 	sendInput.CharLimit = 500
 	sendInput.Width = 60
 
+	wsInput := textinput.New()
+	wsInput.Placeholder = "workspace name"
+	wsInput.CharLimit = 50
+	wsInput.Width = 40
+
 	return Model{
-		store:    store,
-		manager:  manager,
-		agents:   store.List(),
-		columns:  3,
-		view:     viewBoard,
-		width:    120,
-		height:   40,
-		spawnDir: dirInput,
-		sendInput: sendInput,
+		store:       store,
+		manager:     manager,
+		agents:      store.List(),
+		columns:     3,
+		view:        viewBoard,
+		width:       120,
+		height:      40,
+		spawnDir:    dirInput,
+		sendInput:   sendInput,
+		wsNameInput: wsInput,
 	}
 }
 
@@ -230,6 +243,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmd = m.updateSpawnInputs(msg)
 		case viewSend:
 			m.sendInput, cmd = m.sendInput.Update(msg)
+		case viewWorkspace:
+			if m.wsSaveMode {
+				m.wsNameInput, cmd = m.wsNameInput.Update(msg)
+			}
 		}
 		return m, cmd
 	}
@@ -297,6 +314,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleConfirmKill(key)
 	case m.view == viewSpawn:
 		return m.handleSpawnKey(msg)
+	case m.view == viewWorkspace:
+		return m.handleWorkspaceKey(msg)
 	case m.view == viewSend:
 		return m.handleSendKey(msg)
 	}
@@ -307,6 +326,9 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "n":
 		m.openSpawnDialog()
+		return m, nil
+	case "w":
+		m.openWorkspaceDialog()
 		return m, nil
 	case "1":
 		m.columns = 1
@@ -1238,6 +1260,8 @@ func (m Model) View() string {
 		return m.viewZoom()
 	case viewSpawn:
 		return m.viewSpawn()
+	case viewWorkspace:
+		return m.viewWorkspace()
 	case viewSend:
 		return m.viewSend()
 	case viewConfirmKill:
@@ -1537,6 +1561,216 @@ func (m Model) viewConfirmKill() string {
 		"",
 		ui.HelpStyle.Render("[Y] kill  [N/Esc] cancel"),
 	)
+
+	rendered := dialog.Render(content)
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, rendered)
+}
+
+// --- Workspace dialog ---
+
+func (m *Model) openWorkspaceDialog() {
+	names, _ := ListWorkspaces()
+	m.wsNames = names
+	m.wsSelected = 0
+	m.wsSaveMode = false
+	m.view = viewWorkspace
+}
+
+func (m *Model) handleWorkspaceKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+
+	if key == "esc" {
+		if m.wsSaveMode {
+			m.wsSaveMode = false
+			m.wsNameInput.Blur()
+			return m, nil
+		}
+		m.view = viewBoard
+		if m.columns == 1 {
+			m.view = viewCarousel
+		}
+		return m, nil
+	}
+
+	if m.wsSaveMode {
+		return m.handleWorkspaceSaveKey(msg)
+	}
+	return m.handleWorkspaceListKey(msg)
+}
+
+func (m *Model) handleWorkspaceListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+
+	switch key {
+	case "j", "down":
+		if len(m.wsNames) > 0 && m.wsSelected < len(m.wsNames)-1 {
+			m.wsSelected++
+		}
+	case "k", "up":
+		if m.wsSelected > 0 {
+			m.wsSelected--
+		}
+	case "s":
+		m.wsSaveMode = true
+		m.wsNameInput.SetValue("")
+		m.wsNameInput.Focus()
+		return m, nil
+	case "enter":
+		if len(m.wsNames) > 0 && m.wsSelected < len(m.wsNames) {
+			return m.doWorkspaceLoad(m.wsNames[m.wsSelected])
+		}
+	case "a":
+		if len(m.wsNames) > 0 && m.wsSelected < len(m.wsNames) {
+			return m.doWorkspaceAdd(m.wsNames[m.wsSelected])
+		}
+	case "d":
+		if len(m.wsNames) > 0 && m.wsSelected < len(m.wsNames) {
+			m.doWorkspaceDelete(m.wsNames[m.wsSelected])
+		}
+	}
+	return m, nil
+}
+
+func (m *Model) handleWorkspaceSaveKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	switch key {
+	case "enter":
+		name := strings.TrimSpace(m.wsNameInput.Value())
+		if name != "" {
+			return m.doWorkspaceSave(name)
+		}
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.wsNameInput, cmd = m.wsNameInput.Update(msg)
+	return m, cmd
+}
+
+func (m *Model) doWorkspaceSave(name string) (tea.Model, tea.Cmd) {
+	agents := m.store.List()
+	if err := SaveWorkspace(name, agents); err != nil {
+		m.setStatus(fmt.Sprintf("Save error: %v", err))
+	} else {
+		m.setStatus(fmt.Sprintf("Saved workspace %q (%d agents)", name, len(agents)))
+	}
+	m.view = viewBoard
+	if m.columns == 1 {
+		m.view = viewCarousel
+	}
+	return m, nil
+}
+
+func (m *Model) doWorkspaceLoad(name string) (tea.Model, tea.Cmd) {
+	wf, err := LoadWorkspace(name)
+	if err != nil {
+		m.setStatus(fmt.Sprintf("Load error: %v", err))
+		return m, nil
+	}
+
+	// Kill all current agents
+	for _, a := range m.store.List() {
+		sess := m.manager.GetSession(a)
+		if sess != nil {
+			_ = m.manager.Kill(a.ID)
+		} else if a.SessionName != "" {
+			_ = KillBySession(a.SessionName)
+		}
+		a.Backend().CleanHookStatus(a.ID)
+		m.store.Remove(a.ID)
+	}
+
+	count := spawnWorkspaceAgents(wf, m.store, m.manager)
+	m.agents = m.store.List()
+	m.selected = 0
+	m.setStatus(fmt.Sprintf("Loaded workspace %q: %d agent(s)", name, count))
+	m.view = viewBoard
+	if m.columns == 1 {
+		m.view = viewCarousel
+	}
+	return m, nil
+}
+
+func (m *Model) doWorkspaceAdd(name string) (tea.Model, tea.Cmd) {
+	wf, err := LoadWorkspace(name)
+	if err != nil {
+		m.setStatus(fmt.Sprintf("Load error: %v", err))
+		return m, nil
+	}
+
+	count := spawnWorkspaceAgents(wf, m.store, m.manager)
+	m.agents = m.store.List()
+	m.setStatus(fmt.Sprintf("Added workspace %q: %d agent(s)", name, count))
+	m.view = viewBoard
+	if m.columns == 1 {
+		m.view = viewCarousel
+	}
+	return m, nil
+}
+
+func (m *Model) doWorkspaceDelete(name string) {
+	if err := DeleteWorkspace(name); err != nil {
+		m.setStatus(fmt.Sprintf("Delete error: %v", err))
+		return
+	}
+	m.setStatus(fmt.Sprintf("Deleted workspace %q", name))
+	// Refresh list
+	m.wsNames, _ = ListWorkspaces()
+	if m.wsSelected >= len(m.wsNames) && len(m.wsNames) > 0 {
+		m.wsSelected = len(m.wsNames) - 1
+	}
+	if len(m.wsNames) == 0 {
+		m.wsSelected = 0
+	}
+}
+
+func (m Model) viewWorkspace() string {
+	dialog := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(ui.ColorAccent).
+		Padding(1, 2).
+		Width(60)
+
+	title := ui.AgentName.Render("Workspaces")
+
+	var content string
+	if m.wsSaveMode {
+		content = lipgloss.JoinVertical(lipgloss.Left,
+			title, "",
+			"Save current agents as:", "",
+			m.wsNameInput.View(), "",
+			ui.HelpStyle.Render("[Enter] save  [Esc] cancel"),
+		)
+	} else {
+		var listLines []string
+		if len(m.wsNames) == 0 {
+			listLines = append(listLines, lipgloss.NewStyle().
+				Foreground(ui.ColorDim).Render("  No saved workspaces"))
+		} else {
+			for i, name := range m.wsNames {
+				agentCount := 0
+				if wf, err := LoadWorkspace(name); err == nil {
+					agentCount = len(wf.Agents)
+				}
+				label := fmt.Sprintf("%s (%d agents)", name, agentCount)
+				if i == m.wsSelected {
+					listLines = append(listLines, lipgloss.NewStyle().
+						Foreground(ui.ColorAccent).Bold(true).
+						Render("> "+label))
+				} else {
+					listLines = append(listLines, lipgloss.NewStyle().
+						Foreground(ui.ColorDim).
+						Render("  "+label))
+				}
+			}
+		}
+		list := strings.Join(listLines, "\n")
+
+		content = lipgloss.JoinVertical(lipgloss.Left,
+			title, "",
+			list, "",
+			ui.HelpStyle.Render("[s] save current  [Enter] load  [a] add  [d] delete  [Esc] close"),
+		)
+	}
 
 	rendered := dialog.Render(content)
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, rendered)
