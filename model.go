@@ -91,6 +91,9 @@ type Model struct {
 	// Scroll offset for board/carousel views
 	scrollOffset int
 
+	// Cached card data (refreshed on tick, not every render)
+	cachedCards []ui.CardData
+
 	// Tick counter for periodic re-discovery
 	tickCount int
 
@@ -161,6 +164,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		m.refreshStatuses()
 		m.agents = m.store.List()
+		m.cachedCards = m.buildCardData()
 		m.tickCount++
 		var cmds []tea.Cmd
 		cmds = append(cmds, tickCmd())
@@ -215,22 +219,41 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
-	}
 
-	// Update text inputs if in dialog
-	var cmd tea.Cmd
-	switch m.view {
-	case viewSpawn:
-		cmd = m.updateSpawnInputs(msg)
-	case viewSend:
-		m.sendInput, cmd = m.sendInput.Update(msg)
+	default:
+		// Update text inputs if in dialog
+		var cmd tea.Cmd
+		switch m.view {
+		case viewSpawn:
+			cmd = m.updateSpawnInputs(msg)
+		case viewSend:
+			m.sendInput, cmd = m.sendInput.Update(msg)
+		}
+		return m, cmd
 	}
-	return m, cmd
 }
 
 func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.view == viewZoom {
 		return m.handleZoomMouse(msg)
+	}
+
+	// Mouse wheel scrolls the viewport without changing selection
+	n := len(m.agents)
+	if n == 0 {
+		return m, nil
+	}
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
+		if m.scrollOffset > 0 {
+			m.scrollOffset--
+		}
+	case tea.MouseButtonWheelDown:
+		// Each card is ~7 lines; compute max scrollable cards
+		maxScroll := n - 1
+		if m.scrollOffset < maxScroll {
+			m.scrollOffset++
+		}
 	}
 	return m, nil
 }
@@ -619,6 +642,11 @@ func (m *Model) forwardKeyToTmux(msg tea.KeyMsg) {
 		tmuxKey = "Space"
 	case tea.KeyEnter:
 		tmuxKey = "Enter"
+	case tea.KeyCtrlJ:
+		// Shift+Enter arrives as LF (0x0a) in Warp/iTerm. Forward as tmux
+		// key name "C-j" so tmux sends 0x0a to the pane (not CR/Enter).
+		exec.Command("tmux", "send-keys", "-t", m.zoomSession, "C-j").Run()
+		return
 	case tea.KeyBackspace:
 		tmuxKey = "BSpace"
 	case tea.KeyTab:
@@ -1190,7 +1218,7 @@ func (m Model) viewZoom() string {
 	rule := lipgloss.NewStyle().Foreground(ui.ColorBorder).Render(strings.Repeat("─", m.width))
 
 	// Footer (pinned to bottom, matching dashboard style)
-	footerKeys := ui.HelpStyle.Render("[Ctrl+Q] dashboard  [PgUp/PgDn] scroll")
+	footerKeys := ui.HelpStyle.Render("[Ctrl+Q] dashboard  [Ctrl+J] newline  [PgUp/PgDn] scroll")
 	footer := rule + "\n" + " " + footerKeys
 
 	// Calculate content area: total height minus header(1) + top rule(1) + bottom rule(1) + footer text(1)
@@ -1251,7 +1279,7 @@ func (m Model) viewBoard() string {
 		boardHeight = 5
 	}
 
-	cards := m.buildCardData()
+	cards := m.getCards()
 	board := ui.RenderBoard(cards, m.selected, m.columns, m.width, boardHeight)
 
 	// Crop board to available height
@@ -1291,7 +1319,7 @@ func (m Model) viewCarousel() string {
 		carouselHeight = 5
 	}
 
-	cards := m.buildCardData()
+	cards := m.getCards()
 	carousel := ui.RenderCarousel(cards, m.selected, m.width, m.height)
 
 	// Crop to available height with scroll support
@@ -1452,6 +1480,8 @@ func cropToHeight(content string, maxLines int, scrollOffset int) string {
 	return strings.Join(lines, "\n")
 }
 
+// buildCardData fetches pane info for all agents (expensive — calls tmux per agent).
+// Results are cached in m.cachedCards; call only on tick or state changes.
 func (m Model) buildCardData() []ui.CardData {
 	now := time.Now()
 	cards := make([]ui.CardData, len(m.agents))
@@ -1468,6 +1498,25 @@ func (m Model) buildCardData() []ui.CardData {
 			Preview:    info.Preview,
 			Selected:   i == m.selected,
 			Discovered: a.Discovered,
+		}
+	}
+	return cards
+}
+
+// getCards returns cached card data with the Selected field updated for the
+// current selection. This avoids expensive tmux calls on every render.
+func (m Model) getCards() []ui.CardData {
+	cards := m.cachedCards
+	if len(cards) != len(m.agents) {
+		// Cache stale or empty — rebuild
+		cards = m.buildCardData()
+	} else {
+		// Update dynamic fields without tmux calls
+		now := time.Now()
+		for i, a := range m.agents {
+			cards[i].Selected = i == m.selected
+			cards[i].Uptime = now.Sub(a.CreatedAt)
+			cards[i].Since = now.Sub(a.StatusSince)
 		}
 	}
 	return cards

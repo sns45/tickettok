@@ -65,6 +65,9 @@ func CreateSession(name, workDir, command string, stripEnv []string) (*TmuxSessi
 		return nil, fmt.Errorf("tmux new-session: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 
+	// Enable extended keys (CSI u encoding) so modifier key info reaches the inner app.
+	_ = exec.Command("tmux", "set-option", "-t", name, "extended-keys", "on").Run()
+
 	sess := &TmuxSession{Name: name, stripEnv: stripEnv}
 	if err := sess.attachPty(); err != nil {
 		_ = exec.Command("tmux", "kill-session", "-t", name).Run()
@@ -88,6 +91,7 @@ func (t *TmuxSession) Kill() error {
 func (t *TmuxSession) SendKeys(keys string) error {
 	return exec.Command("tmux", "send-keys", "-t", t.Name, keys, "Enter").Run()
 }
+
 
 // CapturePaneContent returns the current visible content of the tmux pane
 // with ANSI colors preserved.
