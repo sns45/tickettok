@@ -32,6 +32,7 @@ const (
 	viewSpawn
 	viewSend
 	viewConfirmKill
+	viewConfirmAutoApprove
 	viewWorkspace
 )
 
@@ -313,6 +314,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleZoomKey(msg)
 	case m.view == viewConfirmKill:
 		return m.handleConfirmKill(key)
+	case m.view == viewConfirmAutoApprove:
+		return m.handleConfirmAutoApprove(key)
 	case m.view == viewSpawn:
 		return m.handleSpawnKey(msg)
 	case m.view == viewWorkspace:
@@ -1125,7 +1128,45 @@ func (m *Model) toggleAutoApprove() {
 		return
 	}
 
-	// Flip the flag
+	// For DONE agents, just flip the flag without confirmation (no respawn needed)
+	if agent.Status == StatusDone {
+		agent.AutoApprove = !agent.AutoApprove
+		m.store.Save()
+		label := "ON"
+		if !agent.AutoApprove {
+			label = "OFF"
+		}
+		m.setStatus(fmt.Sprintf("Auto-approve %s for %s", label, agent.Name))
+		return
+	}
+
+	// Alive agent: show confirmation since it requires kill+respawn
+	m.view = viewConfirmAutoApprove
+}
+
+func (m *Model) handleConfirmAutoApprove(key string) (tea.Model, tea.Cmd) {
+	returnView := viewBoard
+	if m.columns == 1 {
+		returnView = viewCarousel
+	}
+
+	switch key {
+	case "y", "Y", "enter":
+		m.doToggleAutoApprove()
+	default:
+		m.setStatus("Auto-approve toggle cancelled")
+	}
+
+	m.view = returnView
+	return m, nil
+}
+
+func (m *Model) doToggleAutoApprove() {
+	if len(m.agents) == 0 || m.selected >= len(m.agents) {
+		return
+	}
+	agent := m.agents[m.selected]
+
 	agent.AutoApprove = !agent.AutoApprove
 	m.store.Save()
 
@@ -1134,23 +1175,21 @@ func (m *Model) toggleAutoApprove() {
 		label = "OFF"
 	}
 
-	// If the agent is still alive, kill and respawn with new setting
-	if agent.Status != StatusDone {
-		_ = m.manager.Kill(agent.ID)
-		if agent.SessionName != "" {
-			_ = KillBySession(agent.SessionName)
-		}
-		agent.Backend().CleanHookStatus(agent.ID)
-
-		if err := m.manager.RespawnAgent(agent); err != nil {
-			m.setStatus(fmt.Sprintf("Respawn failed: %v", err))
-			return
-		}
-		m.store.UpdateSessionName(agent.ID, agent.SessionName)
-		agent.Status = StatusRunning
-		agent.StatusSince = time.Now()
-		m.store.Save()
+	// Kill and respawn with new setting
+	_ = m.manager.Kill(agent.ID)
+	if agent.SessionName != "" {
+		_ = KillBySession(agent.SessionName)
 	}
+	agent.Backend().CleanHookStatus(agent.ID)
+
+	if err := m.manager.RespawnAgent(agent); err != nil {
+		m.setStatus(fmt.Sprintf("Respawn failed: %v", err))
+		return
+	}
+	m.store.UpdateSessionName(agent.ID, agent.SessionName)
+	agent.Status = StatusRunning
+	agent.StatusSince = time.Now()
+	m.store.Save()
 
 	m.setStatus(fmt.Sprintf("Auto-approve %s for %s", label, agent.Name))
 }
@@ -1313,6 +1352,8 @@ func (m Model) View() string {
 		return m.viewSend()
 	case viewConfirmKill:
 		return m.viewConfirmKill()
+	case viewConfirmAutoApprove:
+		return m.viewConfirmAutoApprove()
 	case viewCarousel:
 		return m.viewCarousel()
 	default:
@@ -1607,6 +1648,35 @@ func (m Model) viewConfirmKill() string {
 		warning,
 		"",
 		ui.HelpStyle.Render("[Y] kill  [N/Esc] cancel"),
+	)
+
+	rendered := dialog.Render(content)
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, rendered)
+}
+
+func (m Model) viewConfirmAutoApprove() string {
+	name := "(none)"
+	newState := "ON"
+	if m.selected < len(m.agents) {
+		name = m.agents[m.selected].Name
+		if m.agents[m.selected].AutoApprove {
+			newState = "OFF"
+		}
+	}
+
+	dialog := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#FBBF24")).
+		Padding(1, 2).
+		Width(55)
+
+	content := lipgloss.JoinVertical(lipgloss.Left,
+		ui.AgentName.Render(fmt.Sprintf("Toggle auto-approve %s: %s?", newState, name)),
+		"",
+		"Agent will be killed and respawned to apply the change.",
+		"The conversation will be resumed automatically.",
+		"",
+		ui.HelpStyle.Render("[Y] confirm  [N/Esc] cancel"),
 	)
 
 	rendered := dialog.Render(content)
