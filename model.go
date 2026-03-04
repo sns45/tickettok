@@ -274,8 +274,10 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			m.scrollOffset--
 		}
 	case tea.MouseButtonWheelDown:
-		// Each card is ~7 lines; compute max scrollable cards
-		maxScroll := n - 1
+		maxScroll := m.maxScrollRows() - 1
+		if maxScroll < 0 {
+			maxScroll = 0
+		}
 		if m.scrollOffset < maxScroll {
 			m.scrollOffset++
 		}
@@ -548,11 +550,57 @@ func (m *Model) ensureSelectedVisible() {
 		maxVisible = 1
 	}
 
-	if m.selected < m.scrollOffset {
-		m.scrollOffset = m.selected
-	} else if m.selected >= m.scrollOffset+maxVisible {
-		m.scrollOffset = m.selected - maxVisible + 1
+	// Use visual row (position within column) instead of flat index
+	// so multi-column layouts scroll correctly.
+	row := m.visualRow(m.selected)
+
+	if row < m.scrollOffset {
+		m.scrollOffset = row
+	} else if row >= m.scrollOffset+maxVisible {
+		m.scrollOffset = row - maxVisible + 1
 	}
+}
+
+// visualRow returns the visual row of agent at flat index idx.
+// In carousel mode (1 col), this is the flat index.
+// In board mode (2/3 col), this is the agent's position within its column.
+func (m *Model) visualRow(idx int) int {
+	if m.columns == 1 || idx >= len(m.agents) {
+		return idx
+	}
+	col := m.columnForStatus(m.agents[idx].Status)
+	row := 0
+	for i, a := range m.agents {
+		if i == idx {
+			return row
+		}
+		if m.columnForStatus(a.Status) == col {
+			row++
+		}
+	}
+	return row
+}
+
+// maxScrollRows returns the number of card rows in the tallest column.
+// In carousel mode, this is the total agent count.
+func (m *Model) maxScrollRows() int {
+	if len(m.agents) == 0 {
+		return 0
+	}
+	if m.columns == 1 {
+		return len(m.agents)
+	}
+	colCounts := make(map[int]int)
+	for _, a := range m.agents {
+		colCounts[m.columnForStatus(a.Status)]++
+	}
+	maxCol := 0
+	for _, c := range colCounts {
+		if c > maxCol {
+			maxCol = c
+		}
+	}
+	return maxCol
 }
 
 func (m *Model) handleCarouselNav(key string) (tea.Model, tea.Cmd) {
