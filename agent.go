@@ -115,6 +115,7 @@ func (m *AgentManager) GetSession(agent *Agent) *TmuxSession {
 
 // DetectStatus checks hook-based status first, then falls back to capture-pane scraping.
 // For discovered (external) agents, uses PTY-free capture to avoid detaching the user's terminal.
+// When the scraper is not confident, the agent's current status is preserved to avoid oscillation.
 func (m *AgentManager) DetectStatus(agent *Agent) AgentStatus {
 	backend := agent.Backend()
 
@@ -127,7 +128,11 @@ func (m *AgentManager) DetectStatus(agent *Agent) AgentStatus {
 		if err != nil {
 			return StatusDone
 		}
-		return backend.DetectStatus(content)
+		result := backend.DetectStatus(content)
+		if result.Confident {
+			return result.Status
+		}
+		return agent.Status
 	}
 
 	// Try hook-based status first (fast, no subprocess)
@@ -146,7 +151,12 @@ func (m *AgentManager) DetectStatus(agent *Agent) AgentStatus {
 		return StatusDone
 	}
 
-	return backend.DetectStatus(content)
+	result := backend.DetectStatus(content)
+	if result.Confident {
+		return result.Status
+	}
+	// Not confident: preserve current status instead of blindly defaulting to RUNNING
+	return agent.Status
 }
 
 // GetPreview returns the last n meaningful output lines from the agent's tmux pane.

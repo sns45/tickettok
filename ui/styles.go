@@ -9,6 +9,7 @@ var (
 	ColorIdle    = lipgloss.Color("#f97316") // orange
 	ColorDone    = lipgloss.Color("#6b7280") // gray
 	ColorAccent  = lipgloss.Color("#06b6d4") // cyan
+	ColorError   = lipgloss.Color("#a855f7") // purple
 	ColorDim     = lipgloss.Color("#4b5563") // dim gray
 	ColorWhite   = lipgloss.Color("#f9fafb")
 	ColorBg      = lipgloss.Color("#1a1a2e")
@@ -37,6 +38,12 @@ var (
 	BadgeDone = lipgloss.NewStyle().
 			Background(ColorDone).
 			Foreground(ColorWhite).
+			Padding(0, 1)
+
+	BadgeError = lipgloss.NewStyle().
+			Background(ColorError).
+			Foreground(ColorWhite).
+			Bold(true).
 			Padding(0, 1)
 
 	// Card styles
@@ -132,6 +139,8 @@ func StatusBadge(status string) string {
 		return BadgeIdle.Render("IDLE")
 	case "DONE":
 		return BadgeDone.Render("DONE")
+	case "STUCK":
+		return BadgeError.Render("STUCK")
 	default:
 		return BadgeDone.Render(status)
 	}
@@ -147,6 +156,8 @@ func StatusDot(status string) string {
 		return lipgloss.NewStyle().Foreground(ColorIdle).Render("○")
 	case "DONE":
 		return lipgloss.NewStyle().Foreground(ColorDone).Render("✓")
+	case "STUCK":
+		return lipgloss.NewStyle().Foreground(ColorError).Render("⚠")
 	default:
 		return "·"
 	}

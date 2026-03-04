@@ -58,70 +58,130 @@ func TestRegistryAllBackends(t *testing.T) {
 func TestClaudeDetectStatus(t *testing.T) {
 	cb := &ClaudeBackend{}
 	tests := []struct {
-		name    string
-		content string
-		want    AgentStatus
+		name      string
+		content   string
+		want      AgentStatus
+		confident bool
 	}{
 		{
 			"running - esc to interrupt",
 			"Processing files...\nesc to interrupt",
-			StatusRunning,
+			StatusRunning, true,
 		},
 		{
 			"running - spinner with ellipsis",
 			"some output\n\u2722 Thinking...",
-			StatusRunning,
+			StatusRunning, true,
 		},
 		{
 			"running - Running...",
 			"Tool output\nRunning...\n",
-			StatusRunning,
+			StatusRunning, true,
 		},
 		{
 			"waiting - allow once",
 			"Some output\nAllow once\nAllow always",
-			StatusWaiting,
+			StatusWaiting, true,
 		},
 		{
-			"waiting - yes/no",
-			"Do something?\nyes/no",
-			StatusWaiting,
+			"waiting - yes/no needs 2 medium signals",
+			"Do something?\nyes/no\napprove",
+			StatusWaiting, true,
 		},
 		{
 			"idle - prompt",
 			"Done with task\n❯ ",
-			StatusIdle,
+			StatusIdle, true,
 		},
 		{
 			"idle - ? for shortcuts",
 			"output\n? for shortcuts",
-			StatusIdle,
+			StatusIdle, true,
 		},
 		{
 			"done - goodbye",
 			"All done\nGoodbye!",
-			StatusDone,
+			StatusDone, true,
 		},
 		{
 			"done - session ended",
 			"work complete\nsession ended",
-			StatusDone,
+			StatusDone, true,
 		},
 		{
-			"empty content defaults to running",
+			"empty content defaults to running not confident",
 			"",
-			StatusRunning,
+			StatusRunning, false,
 		},
 		{
-			"whitespace only defaults to running",
+			"whitespace only defaults to running not confident",
 			"   \n   \n   ",
-			StatusRunning,
+			StatusRunning, false,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := cb.DetectStatus(tt.content); got != tt.want {
-				t.Errorf("DetectStatus() = %q, want %q", got, tt.want)
+			got := cb.DetectStatus(tt.content)
+			if got.Status != tt.want {
+				t.Errorf("DetectStatus().Status = %q, want %q", got.Status, tt.want)
+			}
+			if got.Confident != tt.confident {
+				t.Errorf("DetectStatus().Confident = %v, want %v", got.Confident, tt.confident)
+			}
+		})
+	}
+}
+
+// TestClaudeZoneBasedScraping verifies that keywords in content zone do NOT trigger false positives.
+func TestClaudeZoneBasedScraping(t *testing.T) {
+	cb := &ClaudeBackend{}
+	sep := strings.Repeat("─", 40)
+	tests := []struct {
+		name      string
+		content   string
+		want      AgentStatus
+		confident bool
+	}{
+		{
+			"approve in content zone does NOT trigger WAITING",
+			"I will approve the changes\nDone with review\n" + sep + "\n❯ ",
+			StatusIdle, true,
+		},
+		{
+			"approve in chrome zone DOES trigger WAITING (high confidence)",
+			"Some output\n" + sep + "\nAllow once\nAllow always",
+			StatusWaiting, true,
+		},
+		{
+			"approve in chrome zone with medium confidence (2+ signals)",
+			"Some output\n" + sep + "\napprove\ny/n",
+			StatusWaiting, true,
+		},
+		{
+			"single medium signal in chrome does NOT trigger WAITING",
+			"Some output\n" + sep + "\napprove\n❯ ",
+			// ❯ at start of line triggers IDLE before medium count check
+			StatusIdle, true,
+		},
+		{
+			"deny in content does not trigger WAITING",
+			"The system will deny access\n" + sep + "\n❯ ",
+			StatusIdle, true,
+		},
+		{
+			"esc to interrupt in chrome triggers RUNNING",
+			"output text\n" + sep + "\nesc to interrupt",
+			StatusRunning, true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := cb.DetectStatus(tt.content)
+			if got.Status != tt.want {
+				t.Errorf("DetectStatus().Status = %q, want %q", got.Status, tt.want)
+			}
+			if got.Confident != tt.confident {
+				t.Errorf("DetectStatus().Confident = %v, want %v", got.Confident, tt.confident)
 			}
 		})
 	}

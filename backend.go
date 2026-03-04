@@ -8,6 +8,14 @@ import (
 	"time"
 )
 
+// StatusResult pairs a detected status with a confidence flag.
+// Confident == true means a positive indicator was matched.
+// Confident == false means no indicator matched and the status is a default guess.
+type StatusResult struct {
+	Status    AgentStatus
+	Confident bool
+}
+
 // Backend defines the contract for an AI coding agent backend.
 type Backend interface {
 	Name() string // Display name: "Claude Code"
@@ -20,7 +28,7 @@ type Backend interface {
 	CheckDeps() error
 
 	// Content analysis (called with ANSI-stripped pane content)
-	DetectStatus(content string) AgentStatus
+	DetectStatus(content string) StatusResult
 	DetectMode(content string) string
 	StripChrome(lines []string, waiting bool) []string
 
@@ -120,7 +128,7 @@ func readHookStatusFile(agentID string) (AgentStatus, bool) {
 
 	switch hs.State {
 	case "RUNNING":
-		if age > 30 {
+		if age > 120 {
 			return "", false
 		}
 		return StatusRunning, true

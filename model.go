@@ -34,6 +34,7 @@ const (
 	viewConfirmKill
 	viewConfirmAutoApprove
 	viewWorkspace
+	viewBatch
 )
 
 // spawnFocus tracks which section of the spawn dialog has focus.
@@ -97,6 +98,9 @@ type Model struct {
 
 	// Cached card data (refreshed on tick, not every render)
 	cachedCards []ui.CardData
+
+	// Batch dialog
+	batchOptions []batchOption // computed when opening dialog
 
 	// Tick counter for periodic re-discovery
 	tickCount int
@@ -316,6 +320,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleConfirmKill(key)
 	case m.view == viewConfirmAutoApprove:
 		return m.handleConfirmAutoApprove(key)
+	case m.view == viewBatch:
+		return m.handleBatchKey(key)
 	case m.view == viewSpawn:
 		return m.handleSpawnKey(msg)
 	case m.view == viewWorkspace:
@@ -360,6 +366,9 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.selected = len(m.agents) - 1
 		}
 		return m, nil
+	case "b":
+		m.openBatchDialog()
+		return m, nil
 	case "u":
 		if m.updateAvailable && !m.updating {
 			m.updating = true
@@ -398,6 +407,8 @@ func (m *Model) handleBoardNav(key string) (tea.Model, tea.Cmd) {
 		m.openSendDialog()
 	case "a":
 		m.toggleAutoApprove()
+	case "r", "R":
+		return m.restartStuckAgent()
 	}
 	m.ensureSelectedVisible()
 	return m, nil
@@ -505,17 +516,17 @@ func (m *Model) nextInSameColumn(delta int) int {
 // columnForStatus returns the column index for a given agent status.
 func (m *Model) columnForStatus(status AgentStatus) int {
 	if m.columns == 2 {
-		// 2-col: IDLE/DONE=0, ACTIVE(RUNNING+WAITING)=1
+		// 2-col: IDLE/DONE=0, ACTIVE(RUNNING+WAITING+STUCK)=1
 		switch status {
-		case StatusRunning, StatusWaiting:
+		case StatusRunning, StatusWaiting, StatusError:
 			return 1
 		default:
 			return 0
 		}
 	}
-	// 3-col: IDLE/DONE=0, WAITING=1, RUNNING=2
+	// 3-col: IDLE/DONE=0, WAITING/STUCK=1, RUNNING=2
 	switch status {
-	case StatusWaiting:
+	case StatusWaiting, StatusError:
 		return 1
 	case StatusRunning:
 		return 2
@@ -563,6 +574,8 @@ func (m *Model) handleCarouselNav(key string) (tea.Model, tea.Cmd) {
 		m.openSendDialog()
 	case "a":
 		m.toggleAutoApprove()
+	case "r", "R":
+		return m.restartStuckAgent()
 	}
 	m.ensureSelectedVisible()
 	return m, nil
@@ -573,6 +586,8 @@ func (m *Model) handleZoomKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Ctrl+Q exits zoom
 	if key == "ctrl+q" {
+		zoomedID := m.zoomAgentID
+
 		m.view = viewBoard
 		if m.columns == 1 {
 			m.view = viewCarousel
@@ -584,6 +599,17 @@ func (m *Model) handleZoomKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.zoomSession = ""
 		m.zoomContent = ""
 		m.zoomScrollOff = 0
+
+		// Immediate status refresh for the agent we just exited
+		if agent := m.store.Get(zoomedID); agent != nil {
+			newStatus := m.manager.DetectStatus(agent)
+			if newStatus != agent.Status {
+				m.store.Update(agent.ID, newStatus)
+			}
+		}
+		m.agents = m.store.List()
+		m.cachedCards = m.buildCardData()
+
 		return m, tea.SetWindowTitle("TicketTok")
 	}
 
@@ -721,6 +747,8 @@ func (m *Model) forwardKeyToTmux(msg tea.KeyMsg) {
 		tmuxKey = "C-k"
 	case tea.KeyCtrlW:
 		tmuxKey = "C-w"
+	case tea.KeyCtrlT:
+		tmuxKey = "C-t"
 	case tea.KeyEscape:
 		tmuxKey = "Escape"
 	default:
@@ -1195,11 +1223,35 @@ func (m *Model) doToggleAutoApprove() {
 }
 
 func (m *Model) refreshStatuses() {
+	// Track transitions for notifications
+	var transitions []statusTransition
+
 	for _, agent := range m.agents {
+		oldStatus := agent.Status
 		newStatus := m.manager.DetectStatus(agent)
-		if newStatus != agent.Status {
+		if newStatus != oldStatus {
 			m.store.Update(agent.ID, newStatus)
+			transitions = append(transitions, statusTransition{agent.Name, oldStatus, newStatus})
 		}
+	}
+
+	// Stuck detection: RUNNING >10min with no recent hook activity
+	for _, agent := range m.agents {
+		if agent.Status == StatusRunning && !agent.Discovered &&
+			time.Since(agent.StatusSince) > 10*time.Minute {
+			// Check if hook file is stale or missing
+			hookPath := filepath.Join(hookStatusDir(), agent.ID+".json")
+			info, err := os.Stat(hookPath)
+			if err != nil || time.Since(info.ModTime()) > 5*time.Minute {
+				m.store.Update(agent.ID, StatusError)
+				transitions = append(transitions, statusTransition{agent.Name, StatusRunning, StatusError})
+			}
+		}
+	}
+
+	// Notify on transitions
+	if len(transitions) > 0 {
+		m.notifyTransitions(transitions)
 	}
 
 	// Auto-remove discovered agents that have been DONE for >30s
@@ -1208,6 +1260,52 @@ func (m *Model) refreshStatuses() {
 			time.Since(agent.StatusSince) > 30*time.Second {
 			m.store.Remove(agent.ID)
 		}
+	}
+}
+
+// statusTransition records a single agent status change.
+type statusTransition struct {
+	name  string
+	oldSt AgentStatus
+	newSt AgentStatus
+}
+
+// notifyTransitions shows a status bar message and rings the bell for WAITING transitions.
+func (m *Model) notifyTransitions(transitions []statusTransition) {
+	// Priority: WAITING > STUCK > DONE > IDLE > RUNNING
+	priority := func(s AgentStatus) int {
+		switch s {
+		case StatusWaiting:
+			return 5
+		case StatusError:
+			return 4
+		case StatusDone:
+			return 3
+		case StatusIdle:
+			return 2
+		default:
+			return 1
+		}
+	}
+
+	// Find highest priority transition
+	best := 0
+	for i, t := range transitions {
+		if priority(t.newSt) > priority(transitions[best].newSt) {
+			best = i
+		}
+	}
+
+	t := transitions[best]
+	msg := fmt.Sprintf("%s: %s \u2192 %s", t.name, t.oldSt, t.newSt)
+	if len(transitions) > 1 {
+		msg += fmt.Sprintf(" (+%d more)", len(transitions)-1)
+	}
+	m.setStatus(msg)
+
+	// Ring terminal bell for transitions that need attention
+	if t.newSt == StatusWaiting || t.newSt == StatusError {
+		fmt.Print("\a")
 	}
 }
 
@@ -1354,6 +1452,8 @@ func (m Model) View() string {
 		return m.viewConfirmKill()
 	case viewConfirmAutoApprove:
 		return m.viewConfirmAutoApprove()
+	case viewBatch:
+		return m.viewBatchDialog()
 	case viewCarousel:
 		return m.viewCarousel()
 	default:
@@ -1681,6 +1781,171 @@ func (m Model) viewConfirmAutoApprove() string {
 
 	rendered := dialog.Render(content)
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, rendered)
+}
+
+// --- Batch operations dialog ---
+
+type batchOption struct {
+	key   string // "1", "2", "3"
+	label string
+	count int
+	action func(m *Model)
+}
+
+func (m *Model) openBatchDialog() {
+	var opts []batchOption
+	keyNum := 1
+
+	// Count agents by status
+	var doneCount, waitingCount, totalCount int
+	for _, a := range m.agents {
+		totalCount++
+		switch a.Status {
+		case StatusDone:
+			doneCount++
+		case StatusWaiting:
+			waitingCount++
+		}
+	}
+
+	if doneCount > 0 {
+		opts = append(opts, batchOption{
+			key:   fmt.Sprintf("%d", keyNum),
+			label: fmt.Sprintf("Kill all DONE agents (%d)", doneCount),
+			count: doneCount,
+			action: func(m *Model) {
+				n := m.store.ClearDone()
+				m.agents = m.store.List()
+				m.setStatus(fmt.Sprintf("Killed %d DONE agents", n))
+				if m.selected >= len(m.agents) && len(m.agents) > 0 {
+					m.selected = len(m.agents) - 1
+				}
+			},
+		})
+		keyNum++
+	}
+
+	if totalCount > 0 {
+		opts = append(opts, batchOption{
+			key:   fmt.Sprintf("%d", keyNum),
+			label: fmt.Sprintf("Kill all agents (%d)", totalCount),
+			count: totalCount,
+			action: func(m *Model) {
+				for _, a := range m.store.List() {
+					sess := m.manager.GetSession(a)
+					if sess != nil {
+						_ = m.manager.Kill(a.ID)
+					} else if a.SessionName != "" {
+						_ = KillBySession(a.SessionName)
+					}
+					a.Backend().CleanHookStatus(a.ID)
+					m.store.Remove(a.ID)
+				}
+				m.agents = m.store.List()
+				m.selected = 0
+				m.setStatus(fmt.Sprintf("Killed all %d agents", totalCount))
+			},
+		})
+		keyNum++
+	}
+
+	if waitingCount > 0 {
+		opts = append(opts, batchOption{
+			key:   fmt.Sprintf("%d", keyNum),
+			label: fmt.Sprintf("Send \"y\" to all WAITING agents (%d)", waitingCount),
+			count: waitingCount,
+			action: func(m *Model) {
+				sent := 0
+				for _, a := range m.agents {
+					if a.Status == StatusWaiting {
+						_ = m.manager.SendKeys(a, "y")
+						sent++
+					}
+				}
+				m.setStatus(fmt.Sprintf("Sent \"y\" to %d WAITING agents", sent))
+			},
+		})
+	}
+
+	if len(opts) == 0 {
+		m.setStatus("No batch operations available")
+		return
+	}
+	m.batchOptions = opts
+	m.view = viewBatch
+}
+
+func (m *Model) handleBatchKey(key string) (tea.Model, tea.Cmd) {
+	returnView := viewBoard
+	if m.columns == 1 {
+		returnView = viewCarousel
+	}
+
+	if key == "esc" {
+		m.view = returnView
+		return m, nil
+	}
+
+	for _, opt := range m.batchOptions {
+		if key == opt.key {
+			opt.action(m)
+			m.view = returnView
+			return m, nil
+		}
+	}
+
+	m.view = returnView
+	return m, nil
+}
+
+func (m Model) viewBatchDialog() string {
+	dialog := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(ui.ColorAccent).
+		Padding(1, 2).
+		Width(50)
+
+	lines := []string{
+		ui.AgentName.Render("Batch Operations"),
+		"",
+	}
+	for _, opt := range m.batchOptions {
+		lines = append(lines, fmt.Sprintf("  [%s] %s", opt.key, opt.label))
+	}
+	lines = append(lines, "", ui.HelpStyle.Render("[Esc] Cancel"))
+
+	content := lipgloss.JoinVertical(lipgloss.Left, lines...)
+	rendered := dialog.Render(content)
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, rendered)
+}
+
+// restartStuckAgent restarts a STUCK agent by killing and respawning it.
+func (m *Model) restartStuckAgent() (tea.Model, tea.Cmd) {
+	if len(m.agents) == 0 || m.selected >= len(m.agents) {
+		return m, nil
+	}
+	agent := m.agents[m.selected]
+	if agent.Status != StatusError {
+		m.setStatus("Only STUCK agents can be restarted (use R)")
+		return m, nil
+	}
+
+	// Kill and respawn
+	_ = m.manager.Kill(agent.ID)
+	if agent.SessionName != "" {
+		_ = KillBySession(agent.SessionName)
+	}
+	agent.Backend().CleanHookStatus(agent.ID)
+
+	if err := m.manager.RespawnAgent(agent); err != nil {
+		m.setStatus(fmt.Sprintf("Restart failed: %v", err))
+		return m, nil
+	}
+	m.store.UpdateSessionName(agent.ID, agent.SessionName)
+	m.store.Update(agent.ID, StatusRunning)
+	m.agents = m.store.List()
+	m.setStatus(fmt.Sprintf("Restarted: %s", agent.Name))
+	return m, nil
 }
 
 // --- Workspace dialog ---

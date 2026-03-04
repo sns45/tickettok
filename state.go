@@ -16,6 +16,7 @@ const (
 	StatusIdle    AgentStatus = "IDLE"
 	StatusWaiting AgentStatus = "WAITING"
 	StatusDone    AgentStatus = "DONE"
+	StatusError   AgentStatus = "STUCK"
 )
 
 type Agent struct {

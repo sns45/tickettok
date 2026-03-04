@@ -12,7 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-var version = "0.11.0"
+var version = "0.12.0"
 
 func main() {
 	checkDeps()
@@ -343,8 +343,8 @@ func cmdStatus() {
 		return
 	}
 
-	status := backend.DetectStatus(content)
-	fmt.Printf("%s: %s\n", agent.Name, status)
+	result := backend.DetectStatus(content)
+	fmt.Printf("%s: %s\n", agent.Name, result.Status)
 }
 
 func cmdDiscover() {

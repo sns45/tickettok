@@ -46,8 +46,10 @@ func (c *ClaudeBackend) CheckDeps() error {
 	return nil
 }
 
-// DetectStatus determines agent status from tmux pane content.
-func (c *ClaudeBackend) DetectStatus(content string) AgentStatus {
+// DetectStatus determines agent status from tmux pane content using zone-based scraping.
+// Lines are split into "chrome" (below the separator ─────) and "content" (above).
+// Status keywords are only checked in the chrome zone to avoid false positives.
+func (c *ClaudeBackend) DetectStatus(content string) StatusResult {
 	lines := strings.Split(content, "\n")
 
 	var recent []string
@@ -59,68 +61,110 @@ func (c *ClaudeBackend) DetectStatus(content string) AgentStatus {
 	}
 
 	if len(recent) == 0 {
-		return StatusRunning
+		return StatusResult{StatusRunning, false}
 	}
 
-	// RUNNING
+	// Split into chrome zone (at/below separator) and content zone (above).
+	// recent is ordered bottom-up, so chrome lines come first until we hit the separator.
+	var chrome, above []string
+	sepFound := false
 	for _, line := range recent {
-		lower := strings.ToLower(line)
-		if strings.Contains(lower, "esc to interrupt") {
-			return StatusRunning
-		}
-		if strings.Contains(lower, "running…") || strings.Contains(lower, "running...") {
-			return StatusRunning
-		}
-		hasEllipsis := strings.Contains(line, "…") || strings.Contains(line, "...")
-		if hasEllipsis && hasDingbat(line) {
-			return StatusRunning
-		}
-	}
-
-	// WAITING
-	for _, line := range recent {
-		lower := strings.ToLower(line)
-		for _, p := range []string{
-			"allow once", "allow always",
-			"enter to select", "space to select",
-			"yes/no/always allow",
-			"do you want to proceed",
-			"shall i proceed", "should i proceed",
-			"approve", "deny", "reject",
-			"(y)es", "(n)o", "y/n", "yes/no",
-			"ctrl+g to edit",
-		} {
-			if strings.Contains(lower, p) {
-				return StatusWaiting
+		if !sepFound {
+			chrome = append(chrome, line)
+			if isSeparatorLine(line) {
+				sepFound = true
 			}
+		} else {
+			above = append(above, line)
 		}
 	}
-
-	// IDLE
-	for _, line := range recent {
-		lower := strings.ToLower(line)
-		if line == ">" || line == "$" ||
-			strings.HasSuffix(line, "> ") ||
-			strings.HasSuffix(line, "$ ") ||
-			strings.Contains(line, "❯") ||
-			strings.Contains(lower, "? for shortcuts") ||
-			strings.Contains(lower, "has completed") ||
-			strings.Contains(lower, "anything else") ||
-			strings.Contains(lower, "can i help") {
-			return StatusIdle
+	// No separator found (startup, etc.): use bottom 3 lines as chrome
+	if !sepFound {
+		chrome = recent
+		if len(chrome) > 3 {
+			chrome = chrome[:3]
 		}
+		above = nil
 	}
 
-	// DONE
+	// DONE: check bottommost line
 	bottom := recent[0]
 	bottomLower := strings.ToLower(bottom)
 	for _, p := range []string{"exited", "goodbye", "session ended", "bye"} {
 		if strings.Contains(bottomLower, p) {
-			return StatusDone
+			return StatusResult{StatusDone, true}
 		}
 	}
 
-	return StatusRunning
+	// RUNNING: check chrome zone for activity indicators
+	for _, line := range chrome {
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "esc to interrupt") {
+			return StatusResult{StatusRunning, true}
+		}
+		if strings.Contains(lower, "running…") || strings.Contains(lower, "running...") {
+			return StatusResult{StatusRunning, true}
+		}
+		hasEllipsis := strings.Contains(line, "…") || strings.Contains(line, "...")
+		if hasEllipsis && hasDingbat(line) {
+			return StatusResult{StatusRunning, true}
+		}
+	}
+
+	// WAITING: check chrome zone only.
+	// High-confidence patterns trigger immediately; medium-confidence need 2+ signals.
+	highConfidence := []string{
+		"allow once", "allow always",
+		"enter to select", "space to select",
+		"yes/no/always allow",
+		"ctrl+g to edit",
+	}
+	mediumConfidence := []string{
+		"do you want to proceed",
+		"shall i proceed", "should i proceed",
+		"approve", "deny", "reject",
+		"(y)es", "(n)o", "y/n", "yes/no",
+	}
+	for _, line := range chrome {
+		lower := strings.ToLower(line)
+		for _, p := range highConfidence {
+			if strings.Contains(lower, p) {
+				return StatusResult{StatusWaiting, true}
+			}
+		}
+	}
+	medCount := 0
+	for _, line := range chrome {
+		lower := strings.ToLower(line)
+		for _, p := range mediumConfidence {
+			if strings.Contains(lower, p) {
+				medCount++
+				break // one match per line
+			}
+		}
+	}
+	if medCount >= 2 {
+		return StatusResult{StatusWaiting, true}
+	}
+
+	// IDLE: check chrome zone for prompt indicators
+	for _, line := range chrome {
+		lower := strings.ToLower(line)
+		if line == ">" || line == "$" ||
+			strings.HasSuffix(line, "> ") ||
+			strings.HasSuffix(line, "$ ") ||
+			strings.HasPrefix(line, "❯") ||
+			strings.Contains(lower, "? for shortcuts") ||
+			strings.Contains(lower, "has completed") ||
+			strings.Contains(lower, "anything else") ||
+			strings.Contains(lower, "can i help") {
+			return StatusResult{StatusIdle, true}
+		}
+	}
+
+	// Default: not confident
+	_ = above
+	return StatusResult{StatusRunning, false}
 }
 
 // DetectMode scans pane content for Claude Code mode indicators.
@@ -434,7 +478,7 @@ STATUS_DIR="$HOME/.tickettok/status"
 mkdir -p "$STATUS_DIR"
 STATE=""
 case "$EVENT" in
-  UserPromptSubmit|PreToolUse) STATE="RUNNING" ;;
+  UserPromptSubmit|PreToolUse|PostToolUse) STATE="RUNNING" ;;
   Stop) STATE="IDLE" ;;
   SessionEnd) STATE="DONE" ;;
   Notification)
@@ -484,7 +528,7 @@ func (c *ClaudeBackend) registerClaudeHooks() error {
 		"async":   true,
 	}
 
-	events := []string{"UserPromptSubmit", "PreToolUse", "Stop", "SessionEnd", "Notification"}
+	events := []string{"UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionEnd", "Notification"}
 	for _, event := range events {
 		entry := map[string]interface{}{
 			"hooks": []interface{}{tickettokHook},

@@ -49,7 +49,7 @@ func (g *GeminiBackend) CheckDeps() error {
 // DetectStatus determines agent status from tmux pane content.
 // Gemini's input box ("Type your message") is always visible, even while running.
 // So we must check for RUNNING-specific indicators (like "esc to cancel") before IDLE.
-func (g *GeminiBackend) DetectStatus(content string) AgentStatus {
+func (g *GeminiBackend) DetectStatus(content string) StatusResult {
 	lines := strings.Split(content, "\n")
 
 	var recent []string
@@ -61,14 +61,14 @@ func (g *GeminiBackend) DetectStatus(content string) AgentStatus {
 	}
 
 	if len(recent) == 0 {
-		return StatusRunning
+		return StatusResult{StatusRunning, false}
 	}
 
 	// DONE — check bottommost line first
 	bottomLower := strings.ToLower(recent[0])
 	for _, p := range []string{"exited", "goodbye", "session ended", "bye"} {
 		if strings.Contains(bottomLower, p) {
-			return StatusDone
+			return StatusResult{StatusDone, true}
 		}
 	}
 
@@ -77,7 +77,7 @@ func (g *GeminiBackend) DetectStatus(content string) AgentStatus {
 	for _, line := range recent {
 		lower := strings.ToLower(line)
 		if strings.Contains(lower, "esc to cancel") {
-			return StatusRunning
+			return StatusResult{StatusRunning, true}
 		}
 	}
 
@@ -91,7 +91,7 @@ func (g *GeminiBackend) DetectStatus(content string) AgentStatus {
 			"shall i proceed", "should i proceed",
 		} {
 			if strings.Contains(lower, p) {
-				return StatusWaiting
+				return StatusResult{StatusWaiting, true}
 			}
 		}
 	}
@@ -103,12 +103,12 @@ func (g *GeminiBackend) DetectStatus(content string) AgentStatus {
 			strings.Contains(lower, "what would you like") ||
 			strings.Contains(lower, "how can i help") ||
 			strings.Contains(lower, "let me know what") {
-			return StatusIdle
+			return StatusResult{StatusIdle, true}
 		}
 	}
 
-	// Default: RUNNING (agent is processing)
-	return StatusRunning
+	// Default: not confident
+	return StatusResult{StatusRunning, false}
 }
 
 // DetectMode returns empty — Gemini doesn't have EDITS/PLAN modes.
