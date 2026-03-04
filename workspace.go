@@ -16,6 +16,7 @@ type WorkspaceAgent struct {
 	Dir         string `json:"dir"`
 	BackendID   string `json:"backend,omitempty"`
 	AutoApprove bool   `json:"auto_approve,omitempty"`
+	SessionID   string `json:"session_id,omitempty"`
 }
 
 // WorkspaceFile represents a saved workspace containing agent templates.
@@ -23,6 +24,49 @@ type WorkspaceFile struct {
 	Name      string           `json:"name"`
 	Agents    []WorkspaceAgent `json:"agents"`
 	CreatedAt time.Time        `json:"created_at"`
+}
+
+// lookupClaudeSessionID finds the most recently modified Claude session ID
+// for the given directory by reading Claude's sessions-index.json.
+func lookupClaudeSessionID(dir string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+
+	encoded := strings.ReplaceAll(dir, "/", "-")
+	indexPath := filepath.Join(home, ".claude", "projects", encoded, "sessions-index.json")
+
+	data, err := os.ReadFile(indexPath)
+	if err != nil {
+		return ""
+	}
+
+	var entries []struct {
+		SessionID string `json:"sessionId"`
+		Modified  string `json:"modified"`
+	}
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return ""
+	}
+
+	if len(entries) == 0 {
+		return ""
+	}
+
+	best := 0
+	bestTime, _ := time.Parse(time.RFC3339Nano, entries[0].Modified)
+	for i := 1; i < len(entries); i++ {
+		t, err := time.Parse(time.RFC3339Nano, entries[i].Modified)
+		if err != nil {
+			continue
+		}
+		if t.After(bestTime) {
+			bestTime = t
+			best = i
+		}
+	}
+	return entries[best].SessionID
 }
 
 func workspaceDir() string {
@@ -42,12 +86,16 @@ func SaveWorkspace(name string, agents []*Agent) error {
 
 	var templates []WorkspaceAgent
 	for _, a := range agents {
-		templates = append(templates, WorkspaceAgent{
+		wa := WorkspaceAgent{
 			Name:        a.Name,
 			Dir:         a.Dir,
 			BackendID:   a.BackendID,
 			AutoApprove: a.AutoApprove,
-		})
+		}
+		if a.BackendID == "claude" || a.BackendID == "" {
+			wa.SessionID = lookupClaudeSessionID(a.Dir)
+		}
+		templates = append(templates, wa)
 	}
 	if templates == nil {
 		templates = []WorkspaceAgent{}
@@ -160,7 +208,13 @@ func spawnWorkspaceAgents(wf *WorkspaceFile, store *Store, manager *AgentManager
 		}
 		agent.AutoApprove = t.AutoApprove
 
+		// Use exact session ID when available, otherwise fall back to --continue.
 		var extraArgs []string
+		if t.SessionID != "" {
+			extraArgs = []string{"--resume", t.SessionID}
+		} else {
+			extraArgs = agent.Backend().ResumeArgs()
+		}
 		if agent.AutoApprove {
 			extraArgs = append(extraArgs, agent.Backend().AutoApproveArgs()...)
 		}

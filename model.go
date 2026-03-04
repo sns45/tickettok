@@ -108,10 +108,11 @@ type Model struct {
 	shouldReExec    bool
 
 	// Workspace dialog
-	wsNames     []string        // cached workspace names
-	wsSelected  int             // selected index in list
-	wsSaveMode  bool            // true = typing name to save
-	wsNameInput textinput.Model // text input for save-as name
+	wsNames         []string        // cached workspace names
+	wsSelected      int             // selected index in list
+	wsSaveMode      bool            // true = typing name to save
+	wsNameInput     textinput.Model // text input for save-as name
+	activeWorkspace string          // name of last loaded/saved workspace
 }
 
 func initialModel(store *Store, manager *AgentManager) Model {
@@ -392,6 +393,8 @@ func (m *Model) handleBoardNav(key string) (tea.Model, tea.Cmd) {
 		m.view = viewConfirmKill
 	case "s", "S":
 		m.openSendDialog()
+	case "a":
+		m.toggleAutoApprove()
 	}
 	m.ensureSelectedVisible()
 	return m, nil
@@ -555,6 +558,8 @@ func (m *Model) handleCarouselNav(key string) (tea.Model, tea.Cmd) {
 		m.view = viewConfirmKill
 	case "s", "S":
 		m.openSendDialog()
+	case "a":
+		m.toggleAutoApprove()
 	}
 	m.ensureSelectedVisible()
 	return m, nil
@@ -1108,6 +1113,48 @@ func (m *Model) killSelected() {
 	}
 }
 
+func (m *Model) toggleAutoApprove() {
+	if len(m.agents) == 0 || m.selected >= len(m.agents) {
+		return
+	}
+	agent := m.agents[m.selected]
+
+	// Only supported for backends that have auto-approve args
+	if len(agent.Backend().AutoApproveArgs()) == 0 {
+		m.setStatus(fmt.Sprintf("%s does not support auto-approve", agent.Backend().Name()))
+		return
+	}
+
+	// Flip the flag
+	agent.AutoApprove = !agent.AutoApprove
+	m.store.Save()
+
+	label := "ON"
+	if !agent.AutoApprove {
+		label = "OFF"
+	}
+
+	// If the agent is still alive, kill and respawn with new setting
+	if agent.Status != StatusDone {
+		_ = m.manager.Kill(agent.ID)
+		if agent.SessionName != "" {
+			_ = KillBySession(agent.SessionName)
+		}
+		agent.Backend().CleanHookStatus(agent.ID)
+
+		if err := m.manager.RespawnAgent(agent); err != nil {
+			m.setStatus(fmt.Sprintf("Respawn failed: %v", err))
+			return
+		}
+		m.store.UpdateSessionName(agent.ID, agent.SessionName)
+		agent.Status = StatusRunning
+		agent.StatusSince = time.Now()
+		m.store.Save()
+	}
+
+	m.setStatus(fmt.Sprintf("Auto-approve %s for %s", label, agent.Name))
+}
+
 func (m *Model) refreshStatuses() {
 	for _, agent := range m.agents {
 		newStatus := m.manager.DetectStatus(agent)
@@ -1345,7 +1392,7 @@ func (m Model) viewBoard() string {
 	if m.updateAvailable && !m.updating {
 		updateVer = m.latestVersion
 	}
-	title := ui.RenderTitle(m.width, len(m.agents), m.columns, updateVer)
+	title := ui.RenderTitle(m.width, len(m.agents), m.columns, updateVer, m.activeWorkspace)
 	footer := ui.RenderFooter(m.width, m.columns, m.updateAvailable && !m.updating)
 
 	var status string
@@ -1385,7 +1432,7 @@ func (m Model) viewCarousel() string {
 	if m.updateAvailable && !m.updating {
 		updateVer = m.latestVersion
 	}
-	title := ui.RenderTitle(m.width, len(m.agents), 1, updateVer)
+	title := ui.RenderTitle(m.width, len(m.agents), 1, updateVer, m.activeWorkspace)
 	footer := ui.RenderFooter(m.width, 1, m.updateAvailable && !m.updating)
 
 	var status string
@@ -1652,6 +1699,7 @@ func (m *Model) doWorkspaceSave(name string) (tea.Model, tea.Cmd) {
 		m.setStatus(fmt.Sprintf("Save error: %v", err))
 	} else {
 		m.setStatus(fmt.Sprintf("Saved workspace %q (%d agents)", name, len(agents)))
+		m.activeWorkspace = name
 	}
 	m.view = viewBoard
 	if m.columns == 1 {
@@ -1682,6 +1730,7 @@ func (m *Model) doWorkspaceLoad(name string) (tea.Model, tea.Cmd) {
 	count := spawnWorkspaceAgents(wf, m.store, m.manager)
 	m.agents = m.store.List()
 	m.selected = 0
+	m.activeWorkspace = name
 	m.setStatus(fmt.Sprintf("Loaded workspace %q: %d agent(s)", name, count))
 	m.view = viewBoard
 	if m.columns == 1 {
@@ -1699,6 +1748,7 @@ func (m *Model) doWorkspaceAdd(name string) (tea.Model, tea.Cmd) {
 
 	count := spawnWorkspaceAgents(wf, m.store, m.manager)
 	m.agents = m.store.List()
+	m.activeWorkspace = name
 	m.setStatus(fmt.Sprintf("Added workspace %q: %d agent(s)", name, count))
 	m.view = viewBoard
 	if m.columns == 1 {
@@ -1799,16 +1849,17 @@ func (m Model) buildCardData() []ui.CardData {
 	for i, a := range m.agents {
 		info := m.manager.GetPaneInfo(a, 13)
 		cards[i] = ui.CardData{
-			Name:       a.Name,
-			Dir:        a.Dir,
-			Title:      info.Title,
-			Status:     string(a.Status),
-			Mode:       info.Mode,
-			Uptime:     now.Sub(a.CreatedAt),
-			Since:      now.Sub(a.StatusSince),
-			Preview:    info.Preview,
-			Selected:   i == m.selected,
-			Discovered: a.Discovered,
+			Name:        a.Name,
+			Dir:         a.Dir,
+			Title:       info.Title,
+			Status:      string(a.Status),
+			Mode:        info.Mode,
+			Uptime:      now.Sub(a.CreatedAt),
+			Since:       now.Sub(a.StatusSince),
+			Preview:     info.Preview,
+			Selected:    i == m.selected,
+			Discovered:  a.Discovered,
+			AutoApprove: a.AutoApprove,
 		}
 	}
 	return cards

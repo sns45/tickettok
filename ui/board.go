@@ -120,9 +120,14 @@ func renderColumnCards(cards []CardData, indices []int, selected, width int) str
 }
 
 // RenderTitle renders the title bar.
+// activeWorkspace is shown in parentheses next to the title when non-empty.
 // updateVersion is shown as a bordered badge next to the title when non-empty (e.g. "0.6.0").
-func RenderTitle(width int, agentCount int, mode int, updateVersion string) string {
-	title := TitleBar.Render("TicketTok")
+func RenderTitle(width int, agentCount int, mode int, updateVersion string, activeWorkspace string) string {
+	titleText := "TicketTok"
+	if activeWorkspace != "" {
+		titleText += fmt.Sprintf(" (%s)", activeWorkspace)
+	}
+	title := TitleBar.Render(titleText)
 
 	if updateVersion != "" {
 		badge := lipgloss.NewStyle().
@@ -154,9 +159,9 @@ func RenderFooter(width int, mode int, updateAvailable bool) string {
 	var keys string
 	switch mode {
 	case 1:
-		keys = "[↑/↓]Nav  [N]ew  [Enter]Zoom  [X]Kill  [S]end  [D]iscover  [C]lear  [W]orkspace  [1/2/3]Mode  [Q]uit"
+		keys = "[↑/↓]Nav  [N]ew  [Enter]Zoom  [X]Kill  [S]end  [A]uto-approve  [D]iscover  [C]lear  [W]orkspace  [1/2/3]Mode  [Q]uit"
 	default:
-		keys = "[↑/↓]Nav  [←/→]Column  [N]ew  [Enter]Zoom  [X]Kill  [S]end  [D]iscover  [C]lear  [W]orkspace  [1/2/3]Mode  [Q]uit"
+		keys = "[↑/↓]Nav  [←/→]Column  [N]ew  [Enter]Zoom  [X]Kill  [S]end  [A]uto-approve  [D]iscover  [C]lear  [W]orkspace  [1/2/3]Mode  [Q]uit"
 	}
 	if updateAvailable {
 		keys += "  [U]pdate"

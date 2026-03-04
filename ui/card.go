@@ -19,8 +19,9 @@ type CardData struct {
 	Uptime     time.Duration
 	Since      time.Duration
 	Preview    []string
-	Selected   bool
-	Discovered bool
+	Selected    bool
+	Discovered  bool
+	AutoApprove bool
 }
 
 // RenderCard renders a single agent card at the given width.
@@ -41,6 +42,9 @@ func RenderCard(d CardData, width int) string {
 	if d.Mode != "" {
 		modeTag := ModeBadgeFor(d.Mode)
 		header = lipgloss.JoinHorizontal(lipgloss.Top, name, "  ", badge, " ", modeTag)
+	}
+	if d.AutoApprove {
+		header = lipgloss.JoinHorizontal(lipgloss.Top, header, " ", BadgeAutoApprove.Render("AUTO"))
 	}
 
 	// Reactive subtitle from pane title
@@ -109,6 +113,9 @@ func RenderCarouselCard(d CardData, width int, previewLines int) string {
 	if d.Mode != "" {
 		modeTag := ModeBadgeFor(d.Mode)
 		header = lipgloss.JoinHorizontal(lipgloss.Top, name, "  ", badge, " ", modeTag)
+	}
+	if d.AutoApprove {
+		header = lipgloss.JoinHorizontal(lipgloss.Top, header, " ", BadgeAutoApprove.Render("AUTO"))
 	}
 
 	// Reactive subtitle from pane title

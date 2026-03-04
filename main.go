@@ -12,7 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-var version = "0.10.0"
+var version = "0.11.0"
 
 func main() {
 	checkDeps()

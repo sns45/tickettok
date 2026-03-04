@@ -18,7 +18,7 @@ func TestRenderTitle(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := RenderTitle(tt.width, tt.agentCount, tt.mode, "")
+			got := RenderTitle(tt.width, tt.agentCount, tt.mode, "", "")
 			if !strings.Contains(got, "TicketTok") {
 				t.Error("RenderTitle does not contain 'TicketTok'")
 			}
@@ -32,7 +32,7 @@ func TestRenderTitle(t *testing.T) {
 	}
 
 	t.Run("shows update badge", func(t *testing.T) {
-		got := RenderTitle(120, 3, 3, "0.6.0")
+		got := RenderTitle(120, 3, 3, "0.6.0", "")
 		if !strings.Contains(got, "0.6.0") {
 			t.Error("RenderTitle should show update version")
 		}

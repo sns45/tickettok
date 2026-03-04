@@ -105,6 +105,12 @@ var (
 			Foreground(lipgloss.Color("#1a1a2e")).
 			Bold(true).
 			Padding(0, 1)
+
+	BadgeAutoApprove = lipgloss.NewStyle().
+			Background(lipgloss.Color("#FBBF24")).
+			Foreground(lipgloss.Color("#1a1a2e")).
+			Bold(true).
+			Padding(0, 1)
 )
 
 func ModeBadgeFor(mode string) string {
