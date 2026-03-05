@@ -44,7 +44,7 @@ func TestRenderTitle(t *testing.T) {
 
 func TestRenderFooter(t *testing.T) {
 	t.Run("carousel mode omits Column nav", func(t *testing.T) {
-		got := RenderFooter(120, 1, false)
+		got := RenderFooter(120, 1, false, false)
 		if strings.Contains(got, "Column") {
 			t.Error("RenderFooter(mode=1) should not contain 'Column' nav")
 		}
@@ -54,23 +54,44 @@ func TestRenderFooter(t *testing.T) {
 	})
 
 	t.Run("board mode includes Column nav", func(t *testing.T) {
-		got := RenderFooter(120, 3, false)
+		got := RenderFooter(120, 3, false, false)
 		if !strings.Contains(got, "Column") {
 			t.Error("RenderFooter(mode=3) should contain 'Column' nav")
 		}
 	})
 
 	t.Run("shows update hint when available", func(t *testing.T) {
-		got := RenderFooter(120, 3, true)
+		got := RenderFooter(120, 3, true, false)
 		if !strings.Contains(got, "pdate") {
 			t.Error("RenderFooter should show [U]pdate when update is available")
 		}
 	})
 
 	t.Run("hides update hint when not available", func(t *testing.T) {
-		got := RenderFooter(120, 3, false)
+		got := RenderFooter(120, 3, false, false)
 		if strings.Contains(got, "pdate") {
 			t.Error("RenderFooter should not show [U]pdate when no update available")
+		}
+	})
+
+	t.Run("shows REMOTE badge when remote is on", func(t *testing.T) {
+		got := RenderFooter(120, 3, false, true)
+		if !strings.Contains(got, "REMOTE") {
+			t.Error("RenderFooter should show REMOTE badge when remoteOn is true")
+		}
+	})
+
+	t.Run("hides REMOTE badge when remote is off", func(t *testing.T) {
+		got := RenderFooter(120, 3, false, false)
+		if strings.Contains(got, "REMOTE") {
+			t.Error("RenderFooter should not show REMOTE badge when remoteOn is false")
+		}
+	})
+
+	t.Run("includes Ctrl+R keybinding", func(t *testing.T) {
+		got := RenderFooter(120, 3, false, false)
+		if !strings.Contains(got, "Ctrl+R") {
+			t.Error("RenderFooter should show [Ctrl+R]emote keybinding")
 		}
 	})
 }

@@ -167,16 +167,24 @@ func RenderTitle(width int, agentCount int, mode int, updateVersion string, acti
 
 // RenderFooter renders the keybindings help footer.
 // When updateAvailable is true, an [U]pdate hint is appended.
-func RenderFooter(width int, mode int, updateAvailable bool) string {
+// When remoteOn is true, a REMOTE badge and [Ctrl+R]emote toggle are shown.
+func RenderFooter(width int, mode int, updateAvailable bool, remoteOn bool) string {
 	var keys string
 	switch mode {
 	case 1:
-		keys = "[↑/↓]Nav  [N]ew  [Enter]Zoom  [X]Kill  [S]end  [A]uto-approve  [B]atch  [D]iscover  [C]lear  [W]orkspace  [1/2/3]Mode  [Q]uit"
+		keys = "[↑/↓]Nav  [N]ew  [Enter]Zoom  [X]Kill  [S]end  [A]uto-approve  [B]atch  [D]iscover  [C]lear  [W]orkspace  [Ctrl+R]emote  [1/2/3]Mode  [Q]uit"
 	default:
-		keys = "[↑/↓]Nav  [←/→]Column  [N]ew  [Enter]Zoom  [X]Kill  [S]end  [A]uto-approve  [B]atch  [D]iscover  [C]lear  [W]orkspace  [1/2/3]Mode  [Q]uit"
+		keys = "[↑/↓]Nav  [←/→]Column  [N]ew  [Enter]Zoom  [X]Kill  [S]end  [A]uto-approve  [B]atch  [D]iscover  [C]lear  [W]orkspace  [Ctrl+R]emote  [1/2/3]Mode  [Q]uit"
 	}
 	if updateAvailable {
 		keys += "  [U]pdate"
+	}
+	if remoteOn {
+		badge := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#22c55e")).
+			Bold(true).
+			Render(" REMOTE")
+		keys += "  " + badge
 	}
 	return FooterStyle.Width(width).Render(HelpStyle.Render(keys))
 }

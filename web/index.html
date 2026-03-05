@@ -1,0 +1,1744 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#1a1b26">
+<title>TicketTok Remote</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #1a1a2e;
+  --bg-surface: #16213e;
+  --bg-float: #1a2340;
+  --bg-highlight: #1e2a4a;
+  --border: #374151;
+  --text: #f9fafb;
+  --text-dim: #4b5563;
+  --text-dark: #374151;
+  --accent: #06b6d4;
+  --accent-dim: #0891b2;
+  --green: #22c55e;
+  --amber: #ef4444;
+  --red: #a855f7;
+  --gray: #f97316;
+  --done: #6b7280;
+  --terminal-bg: #0d1117;
+  --fab-size: 56px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 15px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* ── App Shell ────────────────────────────────────────── */
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  max-width: 480px;
+  margin: 0 auto;
+  position: relative;
+}
+
+/* ── Header ───────────────────────────────────────────── */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  padding-top: calc(12px + var(--safe-top));
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  z-index: 100;
+}
+
+.header-title {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  color: var(--text);
+}
+
+.header-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--red);
+  transition: background 0.3s ease;
+}
+
+.status-dot.connected { background: var(--green); }
+
+/* ── Board View ───────────────────────────────────────── */
+.board {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  padding: 12px 16px;
+  padding-bottom: calc(80px + var(--safe-bottom));
+}
+
+.board.pull-active {
+  transition: transform 0.1s ease-out;
+}
+
+/* ── Empty State ──────────────────────────────────────── */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 60%;
+  gap: 12px;
+  color: var(--text-dim);
+}
+
+.empty-icon {
+  font-size: 48px;
+  opacity: 0.3;
+  line-height: 1;
+}
+
+.empty-text {
+  font-size: 15px;
+  color: var(--text-dim);
+}
+
+.empty-hint {
+  font-size: 13px;
+  color: var(--text-dark);
+}
+
+/* ── Pull to Refresh Indicator ────────────────────────── */
+.pull-indicator {
+  text-align: center;
+  padding: 8px;
+  color: var(--text-dim);
+  font-size: 12px;
+  opacity: 0;
+  transform: translateY(-30px);
+  transition: opacity 0.2s, transform 0.2s;
+}
+
+.pull-indicator.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ── Agent Card ───────────────────────────────────────── */
+.card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  margin-bottom: 10px;
+  overflow: hidden;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  position: relative;
+}
+
+.card:active {
+  transform: scale(0.98);
+}
+
+.card-swipe-bg {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 100px;
+  background: var(--red);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-weight: 600;
+  font-size: 14px;
+  opacity: 0;
+  transition: opacity 0.15s;
+  border-radius: 0 12px 12px 0;
+}
+
+.card-swipe-bg.visible { opacity: 1; }
+
+.card-inner {
+  background: var(--bg-surface);
+  position: relative;
+  z-index: 1;
+  transition: transform 0.2s ease;
+}
+
+.card-main {
+  padding: 14px 16px;
+  cursor: pointer;
+}
+
+.card-row-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.card-status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.card-name {
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--text);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card-auto-approve {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  background: rgba(158, 206, 106, 0.15);
+  color: var(--green);
+  padding: 2px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.card-row-mid {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.card-badge {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+
+.card-backend {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.card-time {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-left: auto;
+}
+
+.card-dir {
+  font-size: 12px;
+  color: var(--text-dark);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+
+/* Status dot + badge colors */
+.status-RUNNING .card-status-dot { background: var(--green); }
+.status-WAITING .card-status-dot { background: var(--amber); }
+.status-IDLE .card-status-dot { background: var(--gray); }
+.status-STUCK .card-status-dot { background: var(--red); }
+.status-DONE .card-status-dot { background: var(--done); }
+
+.status-RUNNING .card-badge { background: rgba(34,197,94,0.15); color: var(--green); }
+.status-WAITING .card-badge { background: rgba(239,68,68,0.15); color: var(--amber); }
+.status-IDLE .card-badge { background: rgba(249,115,22,0.15); color: var(--gray); }
+.status-STUCK .card-badge { background: rgba(168,85,247,0.15); color: var(--red); }
+.status-DONE .card-badge { background: rgba(107,114,128,0.15); color: var(--done); }
+
+/* ── Card Actions (expanded) ──────────────────────────── */
+.card-actions {
+  display: flex;
+  gap: 8px;
+  padding: 0 16px 14px;
+  overflow: hidden;
+  max-height: 0;
+  opacity: 0;
+  transition: max-height 0.25s ease, opacity 0.2s ease, padding 0.25s ease;
+}
+
+.card.expanded .card-actions {
+  max-height: 60px;
+  opacity: 1;
+  padding: 8px 16px 14px;
+}
+
+.card-btn {
+  flex: 1;
+  padding: 10px 0;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  min-height: 44px;
+}
+
+.card-btn:active { opacity: 0.7; }
+
+.btn-zoom {
+  background: var(--accent);
+  color: #fff;
+}
+
+.btn-send {
+  background: var(--bg-highlight);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.btn-kill {
+  background: rgba(247,118,142,0.15);
+  color: var(--red);
+}
+
+/* ── FAB ──────────────────────────────────────────────── */
+.fab {
+  position: fixed;
+  bottom: calc(20px + var(--safe-bottom));
+  right: calc(50% - 240px + 16px);
+  width: var(--fab-size);
+  height: var(--fab-size);
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  font-size: 28px;
+  font-weight: 300;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.fab:active {
+  transform: scale(0.9);
+}
+
+@media (max-width: 480px) {
+  .fab {
+    right: calc(20px + var(--safe-right));
+  }
+}
+
+/* ── Modal Overlay ────────────────────────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  z-index: 300;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+}
+
+.modal-overlay.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.modal {
+  width: 100%;
+  max-width: 480px;
+  background: var(--bg-float);
+  border-radius: 16px 16px 0 0;
+  padding: 24px 20px;
+  padding-bottom: calc(24px + var(--safe-bottom));
+  transform: translateY(100%);
+  transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.modal-overlay.open .modal {
+  transform: translateY(0);
+}
+
+.modal-title {
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 20px;
+  color: var(--text);
+}
+
+.form-group {
+  margin-bottom: 16px;
+}
+
+.form-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+
+.form-input, .form-textarea {
+  width: 100%;
+  padding: 12px 14px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  font-size: 15px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.form-input:focus, .form-textarea:focus {
+  border-color: var(--accent);
+}
+
+.form-textarea {
+  min-height: 80px;
+  resize: vertical;
+}
+
+/* ── Radio Group (Backend Selector) ───────────────────── */
+.radio-group {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.radio-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  min-height: 44px;
+}
+
+.radio-option.selected {
+  border-color: var(--accent);
+  background: rgba(122,162,247,0.1);
+}
+
+.radio-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  position: relative;
+  flex-shrink: 0;
+}
+
+.radio-option.selected .radio-dot {
+  border-color: var(--accent);
+}
+
+.radio-option.selected .radio-dot::after {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.radio-label {
+  font-size: 14px;
+  color: var(--text);
+}
+
+/* ── Toggle Switch ────────────────────────────────────── */
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 44px;
+}
+
+.toggle-switch {
+  width: 48px;
+  height: 28px;
+  border-radius: 14px;
+  background: var(--text-dark);
+  border: none;
+  cursor: pointer;
+  position: relative;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+
+.toggle-switch.on {
+  background: var(--green);
+}
+
+.toggle-knob {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fff;
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  transition: transform 0.2s ease;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
+
+.toggle-switch.on .toggle-knob {
+  transform: translateX(20px);
+}
+
+/* ── Modal Buttons ────────────────────────────────────── */
+.modal-buttons {
+  display: flex;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.modal-btn {
+  flex: 1;
+  padding: 14px 0;
+  border: none;
+  border-radius: 10px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  min-height: 48px;
+  transition: opacity 0.15s;
+}
+
+.modal-btn:active { opacity: 0.7; }
+
+.modal-btn-cancel {
+  background: var(--bg);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+}
+
+.modal-btn-spawn {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* ── Confirm Dialog ───────────────────────────────────── */
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  z-index: 400;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+
+.confirm-overlay.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.confirm-box {
+  width: calc(100% - 40px);
+  max-width: 320px;
+  background: var(--bg-float);
+  border-radius: 14px;
+  padding: 24px;
+  text-align: center;
+  transform: scale(0.9);
+  transition: transform 0.2s ease;
+}
+
+.confirm-overlay.open .confirm-box {
+  transform: scale(1);
+}
+
+.confirm-title {
+  font-size: 17px;
+  font-weight: 700;
+  margin-bottom: 8px;
+  color: var(--text);
+}
+
+.confirm-msg {
+  font-size: 14px;
+  color: var(--text-dim);
+  margin-bottom: 20px;
+}
+
+.confirm-buttons {
+  display: flex;
+  gap: 10px;
+}
+
+.confirm-buttons .modal-btn { flex: 1; }
+
+.btn-danger {
+  background: var(--red);
+  color: #fff;
+}
+
+/* ── Send Message Input ───────────────────────────────── */
+.send-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  z-index: 400;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+
+.send-overlay.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.send-bar {
+  width: 100%;
+  max-width: 480px;
+  background: var(--bg-float);
+  border-radius: 14px 14px 0 0;
+  padding: 16px 20px;
+  padding-bottom: calc(16px + var(--safe-bottom));
+  display: flex;
+  gap: 10px;
+  transform: translateY(100%);
+  transition: transform 0.25s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.send-overlay.open .send-bar {
+  transform: translateY(0);
+}
+
+.send-input {
+  flex: 1;
+  padding: 12px 14px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  font-size: 15px;
+  font-family: inherit;
+  outline: none;
+  min-height: 44px;
+}
+
+.send-input:focus {
+  border-color: var(--accent);
+}
+
+.send-submit {
+  padding: 12px 18px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  min-height: 44px;
+  transition: opacity 0.15s;
+}
+
+.send-submit:active { opacity: 0.7; }
+
+/* ── Zoom View ────────────────────────────────────────── */
+.zoom-view {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  display: flex;
+  flex-direction: column;
+  background: var(--terminal-bg);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+
+.zoom-view.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.zoom-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  padding-top: calc(12px + var(--safe-top));
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.zoom-back {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 24px;
+  cursor: pointer;
+  border-radius: 8px;
+  margin: -8px;
+  margin-right: 0;
+}
+
+.zoom-back:active { opacity: 0.6; }
+
+.zoom-agent-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+
+.zoom-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.zoom-terminal {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  padding: 8px 12px;
+  font-family: "Menlo", "Monaco", "Courier New", "Consolas", monospace;
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text);
+}
+
+.zoom-terminal .ansi-bold { font-weight: 700; }
+.zoom-terminal .ansi-italic { font-style: italic; }
+.zoom-terminal .ansi-underline { text-decoration: underline; }
+
+.zoom-scroll-lock {
+  position: absolute;
+  bottom: 70px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 14px;
+  background: rgba(36, 40, 59, 0.9);
+  color: var(--text-dim);
+  font-size: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+
+.zoom-scroll-lock.visible {
+  opacity: 1;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+/* ── Zoom Quick Actions ───────────────────────────────── */
+.zoom-actions {
+  display: flex;
+  gap: 8px;
+  padding: 10px 16px;
+  padding-bottom: calc(10px + var(--safe-bottom));
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.zoom-btn {
+  flex: 1;
+  padding: 10px 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  min-height: 44px;
+  background: var(--bg-highlight);
+  color: var(--text);
+  transition: opacity 0.15s;
+}
+
+.zoom-btn:active { opacity: 0.7; }
+
+.zoom-btn-yes {
+  background: rgba(158,206,106,0.15);
+  color: var(--green);
+  border-color: rgba(158,206,106,0.3);
+}
+
+.zoom-btn-no {
+  background: rgba(247,118,142,0.15);
+  color: var(--red);
+  border-color: rgba(247,118,142,0.3);
+}
+
+.zoom-btn-back {
+  background: var(--bg-highlight);
+  color: var(--text-dim);
+}
+
+/* ── Zoom Send Bar ────────────────────────────────────── */
+.zoom-send-bar {
+  display: flex;
+  gap: 8px;
+  padding: 10px 16px;
+  padding-bottom: calc(10px + var(--safe-bottom));
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.zoom-send-bar .send-input { flex: 1; }
+
+.zoom-send-bar .send-submit { padding: 12px 16px; }
+
+.zoom-send-bar .zoom-send-cancel {
+  padding: 12px 14px;
+  background: var(--bg-highlight);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 14px;
+  cursor: pointer;
+  min-height: 44px;
+}
+
+/* Utility: hide */
+.hidden { display: none !important; }
+
+/* ── Animations ───────────────────────────────────────── */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.card { animation: fadeIn 0.25s ease both; }
+.card:nth-child(2) { animation-delay: 0.03s; }
+.card:nth-child(3) { animation-delay: 0.06s; }
+.card:nth-child(4) { animation-delay: 0.09s; }
+.card:nth-child(5) { animation-delay: 0.12s; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.status-dot:not(.connected) {
+  animation: pulse 2s ease-in-out infinite;
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- Header -->
+  <div class="header">
+    <div class="header-title">TicketTok Remote</div>
+    <div class="header-status">
+      <span id="connLabel">Connecting</span>
+      <div class="status-dot" id="connDot"></div>
+    </div>
+  </div>
+
+  <!-- Pull Indicator -->
+  <div class="pull-indicator" id="pullIndicator">Release to refresh</div>
+
+  <!-- Board View -->
+  <div class="board" id="board"></div>
+
+  <!-- FAB -->
+  <button class="fab" id="fabBtn" aria-label="Spawn agent">+</button>
+</div>
+
+<!-- Spawn Modal -->
+<div class="modal-overlay" id="spawnOverlay">
+  <div class="modal" id="spawnModal">
+    <div class="modal-title">Spawn Agent</div>
+
+    <div class="form-group">
+      <label class="form-label">Backend</label>
+      <div class="radio-group" id="backendRadios">
+        <div class="radio-option selected" data-value="claude" onclick="selectBackend(this)">
+          <div class="radio-dot"></div>
+          <div class="radio-label">Claude</div>
+        </div>
+        <div class="radio-option" data-value="codex" onclick="selectBackend(this)">
+          <div class="radio-dot"></div>
+          <div class="radio-label">Codex</div>
+        </div>
+        <div class="radio-option" data-value="gemini" onclick="selectBackend(this)">
+          <div class="radio-dot"></div>
+          <div class="radio-label">Gemini</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Directory</label>
+      <input type="text" class="form-input" id="spawnDir" placeholder="/path/to/project" autocomplete="off" autocapitalize="off" spellcheck="false">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Prompt</label>
+      <textarea class="form-textarea" id="spawnPrompt" placeholder="What should the agent work on?" rows="3"></textarea>
+    </div>
+
+    <div class="form-group">
+      <div class="toggle-row">
+        <label class="form-label" style="margin-bottom:0">Auto Approve</label>
+        <button class="toggle-switch" id="spawnAutoApprove" onclick="toggleSwitch(this)">
+          <div class="toggle-knob"></div>
+        </button>
+      </div>
+    </div>
+
+    <div class="modal-buttons">
+      <button class="modal-btn modal-btn-cancel" onclick="closeSpawnModal()">Cancel</button>
+      <button class="modal-btn modal-btn-spawn" onclick="doSpawn()">Spawn</button>
+    </div>
+  </div>
+</div>
+
+<!-- Confirm Dialog -->
+<div class="confirm-overlay" id="confirmOverlay">
+  <div class="confirm-box">
+    <div class="confirm-title" id="confirmTitle">Kill Agent?</div>
+    <div class="confirm-msg" id="confirmMsg">This action cannot be undone.</div>
+    <div class="confirm-buttons">
+      <button class="modal-btn modal-btn-cancel" onclick="closeConfirm()">Cancel</button>
+      <button class="modal-btn btn-danger" id="confirmAction" onclick="confirmAction()">Kill</button>
+    </div>
+  </div>
+</div>
+
+<!-- Zoom View -->
+<div class="zoom-view" id="zoomView">
+  <div class="zoom-header">
+    <button class="zoom-back" onclick="exitZoom()" aria-label="Back">&#8249;</button>
+    <div class="zoom-agent-name" id="zoomAgentName"></div>
+    <div class="zoom-status-dot" id="zoomStatusDot"></div>
+  </div>
+  <div class="zoom-terminal" id="zoomTerminal"></div>
+  <div class="zoom-scroll-lock" id="scrollLockBadge" onclick="scrollToBottom()">Scroll locked. Tap to resume.</div>
+  <!-- Quick actions (visible by default) -->
+  <div class="zoom-actions" id="zoomActions">
+    <button class="zoom-btn zoom-btn-yes" onclick="sendKeys('y\n')">Yes</button>
+    <button class="zoom-btn zoom-btn-no" onclick="sendKeys('n\n')">No</button>
+    <button class="zoom-btn" onclick="showZoomSend()">Send</button>
+    <button class="zoom-btn zoom-btn-back" onclick="exitZoom()">Back</button>
+  </div>
+  <!-- Zoom send bar (hidden by default) -->
+  <div class="zoom-send-bar hidden" id="zoomSendBar">
+    <button class="zoom-send-cancel" onclick="hideZoomSend(); return false;">&#10005;</button>
+    <input type="text" class="send-input" id="zoomSendInput" placeholder="Message..." autocomplete="off" enterkeyhint="send">
+    <button class="send-submit" onclick="doZoomSend(); return false;">Send</button>
+  </div>
+</div>
+
+<script>
+/* ================================================================
+   1. CONSTANTS & STATE
+   ================================================================ */
+var STATE = {
+  agents: [],
+  connected: false,
+  expandedCard: null,
+  zoomedAgent: null,
+  scrollLocked: false,
+  ws: null,
+  reconnectDelay: 1000,
+  reconnectTimer: null,
+  pendingConfirmAgentId: null,
+  sendTargetAgentId: null
+};
+
+/* ANSI standard colors (Tokyo Night palette, indices 0..7) */
+var ANSI_COLORS = [
+  '#414868', '#f7768e', '#9ece6a', '#e0af68',
+  '#7aa2f7', '#bb9af7', '#7dcfff', '#c0caf5'
+];
+/* Bright colors (indices 8..15) */
+var ANSI_BRIGHT = [
+  '#565f89', '#ff7a93', '#b9f27c', '#ff9e64',
+  '#7da6ff', '#c0a0ff', '#89ddff', '#ffffff'
+];
+
+var STATUS_COLORS = {
+  RUNNING: '#22c55e',
+  WAITING: '#ef4444',
+  IDLE: '#f97316',
+  STUCK: '#a855f7',
+  DONE: '#6b7280'
+};
+
+/* ================================================================
+   2. WEBSOCKET CONNECTION
+   ================================================================ */
+function getToken() {
+  var params = new URLSearchParams(window.location.search);
+  return params.get('token') || '';
+}
+
+function connect() {
+  var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  var url = proto + '//' + location.host + '/ws?token=' + encodeURIComponent(getToken());
+
+  var ws;
+  try {
+    ws = new WebSocket(url);
+  } catch (e) {
+    scheduleReconnect();
+    return;
+  }
+
+  ws.onopen = function() {
+    STATE.connected = true;
+    STATE.ws = ws;
+    STATE.reconnectDelay = 1000;
+    updateConnectionUI();
+  };
+
+  ws.onmessage = function(evt) {
+    var msg;
+    try { msg = JSON.parse(evt.data); } catch(e) { return; }
+    handleServerMessage(msg);
+  };
+
+  ws.onclose = function() {
+    STATE.connected = false;
+    STATE.ws = null;
+    updateConnectionUI();
+    scheduleReconnect();
+  };
+
+  ws.onerror = function() {
+    ws.close();
+  };
+}
+
+function scheduleReconnect() {
+  if (STATE.reconnectTimer) return;
+  STATE.reconnectTimer = setTimeout(function() {
+    STATE.reconnectTimer = null;
+    connect();
+    /* Exponential backoff capped at 30s */
+    STATE.reconnectDelay = Math.min(STATE.reconnectDelay * 2, 30000);
+  }, STATE.reconnectDelay);
+}
+
+function wsSend(obj) {
+  if (STATE.ws && STATE.ws.readyState === WebSocket.OPEN) {
+    STATE.ws.send(JSON.stringify(obj));
+  }
+}
+
+function handleServerMessage(msg) {
+  if (msg.type === 'state') {
+    STATE.agents = msg.agents || [];
+    renderBoard();
+    /* Update zoom status dot if zoomed */
+    if (STATE.zoomedAgent) {
+      var a = findAgent(STATE.zoomedAgent);
+      if (a) updateZoomHeader(a);
+    }
+  } else if (msg.type === 'zoom') {
+    if (STATE.zoomedAgent === msg.agentId) {
+      renderZoomContent(msg.content);
+    }
+  }
+}
+
+function updateConnectionUI() {
+  var dot = document.getElementById('connDot');
+  var label = document.getElementById('connLabel');
+  if (STATE.connected) {
+    dot.classList.add('connected');
+    label.textContent = 'Connected';
+  } else {
+    dot.classList.remove('connected');
+    label.textContent = 'Disconnected';
+  }
+}
+
+/* ================================================================
+   3. ANSI PARSER
+   ================================================================ */
+function ansiToHtml(raw) {
+  if (!raw) return '';
+
+  /* Strip OSC sequences: ESC ] ... BEL  or  ESC ] ... ESC \ */
+  raw = raw.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '');
+
+  /* Strip misc escape sequences we don't render:
+     CSI ? ... h/l, CSI ... J, CSI ... K, CSI ... H, CSI ... A/B/C/D,
+     CSI ... r, CSI ... S/T, ESC( ... , ESC= , ESC> etc. */
+  raw = raw.replace(/\x1b\[\?[0-9;]*[hl]/g, '');
+  raw = raw.replace(/\x1b\[[0-9;]*[JKHGABCDSTMLP@Xr]/g, '');
+  raw = raw.replace(/\x1b\[[0-9;]*[a-z]/gi, function(m) {
+    /* Keep SGR (m) sequences, strip everything else */
+    if (m[m.length - 1] === 'm') return m;
+    return '';
+  });
+  raw = raw.replace(/\x1b[()][0-9A-Za-z]/g, '');
+  raw = raw.replace(/\x1b[=>]/g, '');
+
+  /* Handle carriage return: \r\n -> \n, then \r means overwrite current line */
+  raw = raw.replace(/\r\n/g, '\n');
+
+  /* Process \r within lines: keep only the content after last \r in each line */
+  var lines = raw.split('\n');
+  for (var li = 0; li < lines.length; li++) {
+    var line = lines[li];
+    var crIdx = line.lastIndexOf('\r');
+    if (crIdx > 0) {
+      lines[li] = line.substring(crIdx + 1);
+    }
+  }
+  raw = lines.join('\n');
+
+  /* Now parse SGR sequences and build HTML */
+  var output = '';
+  var i = 0;
+  var len = raw.length;
+
+  /* Current style state */
+  var bold = false, italic = false, underline = false;
+  var fg = null, bg = null;
+
+  function openSpan() {
+    var classes = [];
+    var styles = [];
+    if (bold) classes.push('ansi-bold');
+    if (italic) classes.push('ansi-italic');
+    if (underline) classes.push('ansi-underline');
+    if (fg) styles.push('color:' + fg);
+    if (bg) styles.push('background-color:' + bg);
+    if (classes.length || styles.length) {
+      output += '<span';
+      if (classes.length) output += ' class="' + classes.join(' ') + '"';
+      if (styles.length) output += ' style="' + styles.join(';') + '"';
+      output += '>';
+      return true;
+    }
+    return false;
+  }
+
+  var spanOpen = false;
+
+  function closeSpan() {
+    if (spanOpen) { output += '</span>'; spanOpen = false; }
+  }
+
+  function resetStyle() {
+    bold = false; italic = false; underline = false;
+    fg = null; bg = null;
+  }
+
+  function color256(n) {
+    if (n < 8) return ANSI_COLORS[n];
+    if (n < 16) return ANSI_BRIGHT[n - 8];
+    if (n < 232) {
+      /* 6x6x6 cube */
+      n -= 16;
+      var r = Math.floor(n / 36);
+      var g = Math.floor((n % 36) / 6);
+      var b = n % 6;
+      r = r ? r * 40 + 55 : 0;
+      g = g ? g * 40 + 55 : 0;
+      b = b ? b * 40 + 55 : 0;
+      return 'rgb(' + r + ',' + g + ',' + b + ')';
+    }
+    /* Grayscale ramp */
+    var lv = (n - 232) * 10 + 8;
+    return 'rgb(' + lv + ',' + lv + ',' + lv + ')';
+  }
+
+  function processSGR(params) {
+    var codes = params.split(';');
+    var ci = 0;
+    while (ci < codes.length) {
+      var c = parseInt(codes[ci], 10) || 0;
+
+      if (c === 0) { resetStyle(); }
+      else if (c === 1) { bold = true; }
+      else if (c === 3) { italic = true; }
+      else if (c === 4) { underline = true; }
+      else if (c === 22) { bold = false; }
+      else if (c === 23) { italic = false; }
+      else if (c === 24) { underline = false; }
+      else if (c === 39) { fg = null; }
+      else if (c === 49) { bg = null; }
+      else if (c >= 30 && c <= 37) { fg = ANSI_COLORS[c - 30]; }
+      else if (c >= 40 && c <= 47) { bg = ANSI_COLORS[c - 40]; }
+      else if (c >= 90 && c <= 97) { fg = ANSI_BRIGHT[c - 90]; }
+      else if (c >= 100 && c <= 107) { bg = ANSI_BRIGHT[c - 100]; }
+      else if (c === 38) {
+        /* Extended foreground */
+        ci++;
+        var mode = parseInt(codes[ci], 10);
+        if (mode === 5 && ci + 1 < codes.length) {
+          ci++;
+          fg = color256(parseInt(codes[ci], 10) || 0);
+        } else if (mode === 2 && ci + 3 < codes.length) {
+          var rr = parseInt(codes[ci + 1], 10) || 0;
+          var gg = parseInt(codes[ci + 2], 10) || 0;
+          var bb = parseInt(codes[ci + 3], 10) || 0;
+          fg = 'rgb(' + rr + ',' + gg + ',' + bb + ')';
+          ci += 3;
+        }
+      } else if (c === 48) {
+        /* Extended background */
+        ci++;
+        var mode2 = parseInt(codes[ci], 10);
+        if (mode2 === 5 && ci + 1 < codes.length) {
+          ci++;
+          bg = color256(parseInt(codes[ci], 10) || 0);
+        } else if (mode2 === 2 && ci + 3 < codes.length) {
+          var rr2 = parseInt(codes[ci + 1], 10) || 0;
+          var gg2 = parseInt(codes[ci + 2], 10) || 0;
+          var bb2 = parseInt(codes[ci + 3], 10) || 0;
+          bg = 'rgb(' + rr2 + ',' + gg2 + ',' + bb2 + ')';
+          ci += 3;
+        }
+      }
+      ci++;
+    }
+  }
+
+  while (i < len) {
+    /* Check for ESC [ ... m (SGR) */
+    if (raw[i] === '\x1b' && i + 1 < len && raw[i + 1] === '[') {
+      var j = i + 2;
+      while (j < len && ((raw[j] >= '0' && raw[j] <= '9') || raw[j] === ';')) j++;
+      if (j < len && raw[j] === 'm') {
+        closeSpan();
+        var paramStr = raw.substring(i + 2, j);
+        processSGR(paramStr || '0');
+        spanOpen = openSpan();
+        i = j + 1;
+        continue;
+      }
+      /* Unknown escape, skip */
+      i = j + 1;
+      continue;
+    }
+
+    /* Strip any remaining ESC sequences we missed */
+    if (raw[i] === '\x1b') {
+      i++;
+      continue;
+    }
+
+    /* HTML escape */
+    var ch = raw[i];
+    if (ch === '<') output += '&lt;';
+    else if (ch === '>') output += '&gt;';
+    else if (ch === '&') output += '&amp;';
+    else if (ch === '\n') output += '\n';
+    else output += ch;
+
+    i++;
+  }
+
+  closeSpan();
+  return output;
+}
+
+/* ================================================================
+   4. UI RENDERING
+   ================================================================ */
+
+/* ── Board ───────────────────────────────────────────── */
+function renderBoard() {
+  var board = document.getElementById('board');
+  var agents = STATE.agents;
+
+  if (!agents || agents.length === 0) {
+    board.innerHTML = '<div class="empty-state">' +
+      '<div class="empty-icon">&#9744;</div>' +
+      '<div class="empty-text">No agents running</div>' +
+      '<div class="empty-hint">Tap + to spawn one</div>' +
+      '</div>';
+    return;
+  }
+
+  var html = '';
+  for (var i = 0; i < agents.length; i++) {
+    html += renderCard(agents[i]);
+  }
+  board.innerHTML = html;
+}
+
+function renderCard(agent) {
+  var status = agent.status || 'IDLE';
+  var expanded = STATE.expandedCard === agent.id;
+  var dir = agent.dir || '';
+  /* Truncate directory: show last ~40 chars */
+  var dirDisplay = dir.length > 42 ? '...' + dir.slice(-40) : dir;
+
+  var timeSince = timeAgo(agent.status_since || agent.created_at);
+  var backendLabel = agent.backend || 'claude';
+
+  var cls = 'card status-' + status;
+  if (expanded) cls += ' expanded';
+
+  var h = '<div class="' + cls + '" data-id="' + escAttr(agent.id) + '">';
+  h += '<div class="card-swipe-bg">Kill</div>';
+  h += '<div class="card-inner">';
+  h += '<div class="card-main" onclick="toggleCard(\'' + escAttr(agent.id) + '\')">';
+
+  /* Row 1: status dot + name + auto approve badge */
+  h += '<div class="card-row-top">';
+  h += '<div class="card-status-dot"></div>';
+  h += '<div class="card-name">' + esc(agent.name || agent.id) + '</div>';
+  if (agent.auto_approve) {
+    h += '<div class="card-auto-approve">Auto</div>';
+  }
+  h += '</div>';
+
+  /* Row 2: status badge + backend + time */
+  h += '<div class="card-row-mid">';
+  h += '<div class="card-badge">' + esc(status) + '</div>';
+  h += '<div class="card-backend">' + esc(backendLabel) + '</div>';
+  h += '<div class="card-time">' + esc(timeSince) + '</div>';
+  h += '</div>';
+
+  /* Row 3: directory */
+  h += '<div class="card-dir">' + esc(dirDisplay) + '</div>';
+
+  h += '</div>'; /* .card-main */
+
+  /* Action buttons */
+  h += '<div class="card-actions">';
+  h += '<button class="card-btn btn-zoom" onclick="enterZoom(\'' + escAttr(agent.id) + '\')">Zoom</button>';
+  h += '<button class="card-btn btn-send" onclick="openSendMessage(\'' + escAttr(agent.id) + '\')">Send</button>';
+  h += '<button class="card-btn btn-kill" onclick="confirmKill(\'' + escAttr(agent.id) + '\')">Kill</button>';
+  h += '</div>';
+
+  h += '</div>'; /* .card-inner */
+  h += '</div>'; /* .card */
+
+  return h;
+}
+
+function toggleCard(id) {
+  STATE.expandedCard = (STATE.expandedCard === id) ? null : id;
+  renderBoard();
+}
+
+/* ── Zoom ────────────────────────────────────────────── */
+function enterZoom(agentId) {
+  STATE.zoomedAgent = agentId;
+  STATE.scrollLocked = false;
+
+  var agent = findAgent(agentId);
+  if (agent) updateZoomHeader(agent);
+
+  document.getElementById('zoomTerminal').innerHTML = '<span style="color:#565f89">Connecting...</span>';
+  document.getElementById('zoomView').classList.add('open');
+  document.getElementById('scrollLockBadge').classList.remove('visible');
+  showZoomActions();
+
+  wsSend({ action: 'zoom', agentId: agentId });
+}
+
+function exitZoom() {
+  STATE.zoomedAgent = null;
+  document.getElementById('zoomView').classList.remove('open');
+  hideZoomSend();
+  wsSend({ action: 'unzoom' });
+}
+
+function updateZoomHeader(agent) {
+  document.getElementById('zoomAgentName').textContent = agent.name || agent.id;
+  var dot = document.getElementById('zoomStatusDot');
+  dot.style.background = STATUS_COLORS[agent.status] || STATUS_COLORS.IDLE;
+}
+
+function renderZoomContent(content) {
+  var terminal = document.getElementById('zoomTerminal');
+  var html = ansiToHtml(content);
+  terminal.innerHTML = html;
+
+  if (!STATE.scrollLocked) {
+    terminal.scrollTop = terminal.scrollHeight;
+  }
+}
+
+/* Scroll lock detection */
+(function() {
+  var terminal = document.getElementById('zoomTerminal');
+  terminal.addEventListener('scroll', function() {
+    if (!STATE.zoomedAgent) return;
+    var atBottom = terminal.scrollHeight - terminal.scrollTop - terminal.clientHeight < 30;
+    if (atBottom) {
+      STATE.scrollLocked = false;
+      document.getElementById('scrollLockBadge').classList.remove('visible');
+    } else {
+      STATE.scrollLocked = true;
+      document.getElementById('scrollLockBadge').classList.add('visible');
+    }
+  });
+})();
+
+function scrollToBottom() {
+  var terminal = document.getElementById('zoomTerminal');
+  terminal.scrollTop = terminal.scrollHeight;
+  STATE.scrollLocked = false;
+  document.getElementById('scrollLockBadge').classList.remove('visible');
+}
+
+/* ── Zoom actions ────────────────────────────────────── */
+function showZoomActions() {
+  document.getElementById('zoomActions').classList.remove('hidden');
+  document.getElementById('zoomSendBar').classList.add('hidden');
+}
+
+function showZoomSend() {
+  document.getElementById('zoomActions').classList.add('hidden');
+  document.getElementById('zoomSendBar').classList.remove('hidden');
+  var input = document.getElementById('zoomSendInput');
+  input.value = '';
+  setTimeout(function() { input.focus(); }, 100);
+}
+
+function hideZoomSend() {
+  showZoomActions();
+}
+
+function doZoomSend() {
+  var input = document.getElementById('zoomSendInput');
+  var msg = input.value.trim();
+  if (!msg || !STATE.zoomedAgent) return;
+  wsSend({ action: 'send', agentId: STATE.zoomedAgent, message: msg });
+  input.value = '';
+  showZoomActions();
+}
+
+function sendKeys(keys) {
+  if (!STATE.zoomedAgent) return;
+  wsSend({ action: 'sendkeys', agentId: STATE.zoomedAgent, keys: keys });
+}
+
+/* ================================================================
+   5. EVENT HANDLERS
+   ================================================================ */
+
+/* ── Spawn Modal ─────────────────────────────────────── */
+document.getElementById('fabBtn').addEventListener('click', function() {
+  openSpawnModal();
+});
+
+function openSpawnModal() {
+  document.getElementById('spawnDir').value = '';
+  document.getElementById('spawnPrompt').value = '';
+  var toggle = document.getElementById('spawnAutoApprove');
+  toggle.classList.remove('on');
+  /* Reset backend to first option */
+  var opts = document.querySelectorAll('#backendRadios .radio-option');
+  for (var i = 0; i < opts.length; i++) {
+    opts[i].classList.toggle('selected', i === 0);
+  }
+  document.getElementById('spawnOverlay').classList.add('open');
+}
+
+function closeSpawnModal() {
+  document.getElementById('spawnOverlay').classList.remove('open');
+}
+
+function selectBackend(el) {
+  var opts = document.querySelectorAll('#backendRadios .radio-option');
+  for (var i = 0; i < opts.length; i++) opts[i].classList.remove('selected');
+  el.classList.add('selected');
+}
+
+function toggleSwitch(el) {
+  el.classList.toggle('on');
+}
+
+function doSpawn() {
+  var selected = document.querySelector('#backendRadios .radio-option.selected');
+  var backend = selected ? selected.getAttribute('data-value') : 'claude';
+  var dir = document.getElementById('spawnDir').value.trim();
+  var prompt = document.getElementById('spawnPrompt').value.trim();
+  var autoApprove = document.getElementById('spawnAutoApprove').classList.contains('on');
+
+  wsSend({
+    action: 'spawn',
+    backend: backend,
+    dir: dir || '',
+    prompt: prompt,
+    autoApprove: autoApprove
+  });
+
+  closeSpawnModal();
+}
+
+/* Close spawn modal on overlay tap */
+document.getElementById('spawnOverlay').addEventListener('click', function(e) {
+  if (e.target === this) closeSpawnModal();
+});
+
+/* ── Confirm Dialog ──────────────────────────────────── */
+function confirmKill(agentId) {
+  var agent = findAgent(agentId);
+  var name = agent ? (agent.name || agentId) : agentId;
+  STATE.pendingConfirmAgentId = agentId;
+  document.getElementById('confirmTitle').textContent = 'Kill Agent?';
+  document.getElementById('confirmMsg').textContent = 'Terminate "' + name + '". This cannot be undone.';
+  document.getElementById('confirmOverlay').classList.add('open');
+}
+
+function closeConfirm() {
+  STATE.pendingConfirmAgentId = null;
+  document.getElementById('confirmOverlay').classList.remove('open');
+}
+
+function confirmAction() {
+  if (STATE.pendingConfirmAgentId) {
+    wsSend({ action: 'kill', agentId: STATE.pendingConfirmAgentId });
+  }
+  closeConfirm();
+}
+
+document.getElementById('confirmOverlay').addEventListener('click', function(e) {
+  if (e.target === this) closeConfirm();
+});
+
+/* ── Send Message ────────────────────────────────────── */
+function openSendMessage(agentId) {
+  var msg = prompt('Message to agent:');
+  if (msg && msg.trim()) {
+    wsSend({ action: 'send', agentId: agentId, message: msg.trim() });
+  }
+}
+
+/* Handle Enter/Go/Send from soft keyboard on zoom send input */
+document.getElementById('zoomSendInput').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter' || e.keyCode === 13) { e.preventDefault(); doZoomSend(); }
+});
+
+/* ── Swipe to Kill ───────────────────────────────────── */
+(function() {
+  var board = document.getElementById('board');
+  var touchStartX = 0;
+  var touchStartY = 0;
+  var activeCard = null;
+  var swiping = false;
+  var THRESHOLD = 100;
+
+  board.addEventListener('touchstart', function(e) {
+    var card = e.target.closest('.card');
+    if (!card) return;
+    var t = e.touches[0];
+    touchStartX = t.clientX;
+    touchStartY = t.clientY;
+    activeCard = card;
+    swiping = false;
+  }, { passive: true });
+
+  board.addEventListener('touchmove', function(e) {
+    if (!activeCard) return;
+    var t = e.touches[0];
+    var dx = touchStartX - t.clientX;
+    var dy = Math.abs(touchStartY - t.clientY);
+
+    /* Only swipe if horizontal movement dominates */
+    if (dx > 10 && dy < 30) {
+      swiping = true;
+    }
+
+    if (!swiping) return;
+
+    e.preventDefault();
+    var offset = Math.max(0, Math.min(dx, 120));
+    var inner = activeCard.querySelector('.card-inner');
+    var bg = activeCard.querySelector('.card-swipe-bg');
+
+    inner.style.transition = 'none';
+    inner.style.transform = 'translateX(-' + offset + 'px)';
+    bg.classList.toggle('visible', offset > 40);
+  }, { passive: false });
+
+  board.addEventListener('touchend', function() {
+    if (!activeCard) return;
+    var inner = activeCard.querySelector('.card-inner');
+    var bg = activeCard.querySelector('.card-swipe-bg');
+
+    if (swiping) {
+      var current = inner.style.transform;
+      var match = current.match(/translateX\(-?(\d+)/);
+      var offset = match ? parseInt(match[1]) : 0;
+
+      if (offset >= THRESHOLD) {
+        var agentId = activeCard.getAttribute('data-id');
+        confirmKill(agentId);
+      }
+    }
+
+    inner.style.transition = 'transform 0.2s ease';
+    inner.style.transform = 'translateX(0)';
+    bg.classList.remove('visible');
+    activeCard = null;
+    swiping = false;
+  }, { passive: true });
+})();
+
+/* ── Pull to Refresh ─────────────────────────────────── */
+(function() {
+  var board = document.getElementById('board');
+  var indicator = document.getElementById('pullIndicator');
+  var startY = 0;
+  var pulling = false;
+  var PULL_THRESHOLD = 80;
+
+  board.addEventListener('touchstart', function(e) {
+    if (board.scrollTop === 0 && !STATE.zoomedAgent) {
+      startY = e.touches[0].clientY;
+      pulling = true;
+    }
+  }, { passive: true });
+
+  board.addEventListener('touchmove', function(e) {
+    if (!pulling) return;
+    var dy = e.touches[0].clientY - startY;
+    if (dy > 0 && board.scrollTop === 0) {
+      var progress = Math.min(dy / PULL_THRESHOLD, 1);
+      indicator.classList.toggle('visible', progress > 0.3);
+      indicator.textContent = progress >= 1 ? 'Release to refresh' : 'Pull to refresh';
+      board.style.transform = 'translateY(' + Math.min(dy * 0.4, 60) + 'px)';
+    }
+  }, { passive: true });
+
+  board.addEventListener('touchend', function(e) {
+    if (!pulling) return;
+    pulling = false;
+    indicator.classList.remove('visible');
+    board.style.transition = 'transform 0.3s ease';
+    board.style.transform = '';
+    setTimeout(function() { board.style.transition = ''; }, 300);
+
+    /* Check if we pulled enough */
+    var dy = 0;
+    if (e.changedTouches && e.changedTouches[0]) {
+      dy = e.changedTouches[0].clientY - startY;
+    }
+    if (dy >= PULL_THRESHOLD) {
+      /* Force reconnect to get fresh state */
+      if (STATE.ws) {
+        STATE.ws.close();
+      }
+    }
+  }, { passive: true });
+})();
+
+/* ================================================================
+   6. UTILITY FUNCTIONS
+   ================================================================ */
+function findAgent(id) {
+  for (var i = 0; i < STATE.agents.length; i++) {
+    if (STATE.agents[i].id === id) return STATE.agents[i];
+  }
+  return null;
+}
+
+function timeAgo(dateStr) {
+  if (!dateStr) return '';
+  var then = new Date(dateStr).getTime();
+  if (isNaN(then)) return '';
+  var now = Date.now();
+  var diffSec = Math.floor((now - then) / 1000);
+
+  if (diffSec < 5) return 'now';
+  if (diffSec < 60) return diffSec + 's ago';
+  var diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return diffMin + 'm ago';
+  var diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return diffHr + 'h ago';
+  var diffDay = Math.floor(diffHr / 24);
+  return diffDay + 'd ago';
+}
+
+function esc(str) {
+  if (!str) return '';
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function escAttr(str) {
+  return esc(str).replace(/'/g, '&#39;');
+}
+
+/* Update time displays every 30 seconds */
+setInterval(function() {
+  if (!STATE.zoomedAgent) renderBoard();
+}, 30000);
+
+/* ================================================================
+   INIT
+   ================================================================ */
+connect();
+</script>
+</body>
+</html>

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -123,6 +124,9 @@ type Model struct {
 	wsSaveMode      bool            // true = typing name to save
 	wsNameInput     textinput.Model // text input for save-as name
 	activeWorkspace string          // name of last loaded/saved workspace
+
+	// Remote control web server (nil when not active)
+	webServer *WebServer
 }
 
 func initialModel(store *Store, manager *AgentManager) Model {
@@ -192,6 +196,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.agents = m.store.List()
 		m.cachedCards = m.buildCardData()
 		m.tickCount++
+		if m.webServer != nil {
+			m.webServer.BroadcastState()
+		}
 		var cmds []tea.Cmd
 		cmds = append(cmds, tickCmd())
 		// Re-discover every 5th tick (~10s)
@@ -235,6 +242,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case zoomTickMsg:
 		if m.view == viewZoom {
 			m.zoomContent = msg.content
+			if m.webServer != nil {
+				m.webServer.BroadcastZoom(m.zoomAgentID, msg.content)
+			}
 			m.zoomTotalLines = strings.Count(msg.content, "\n") + 1
 			return m, zoomCaptureCmd(m.zoomSession)
 		}
@@ -339,7 +349,12 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Board/carousel keys
 	switch key {
+	case "ctrl+r":
+		return m.toggleRemote()
 	case "q", "ctrl+q", "ctrl+c":
+		if m.webServer != nil {
+			m.webServer.Stop()
+		}
 		return m, tea.Quit
 	case "n":
 		m.openSpawnDialog()
@@ -389,6 +404,40 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleCarouselNav(key)
 	}
 	return m.handleBoardNav(key)
+}
+
+func (m *Model) toggleRemote() (tea.Model, tea.Cmd) {
+	if m.webServer != nil {
+		m.webServer.Stop()
+		m.webServer = nil
+		m.setStatus("Remote control OFF")
+		return m, nil
+	}
+
+	ws := NewWebServer(m.store, m.manager, 8422)
+	if err := ws.Start(); err != nil {
+		m.setStatus(fmt.Sprintf("Remote failed: %v", err))
+		return m, nil
+	}
+	m.webServer = ws
+
+	ip := localIP()
+	url := fmt.Sprintf("http://%s:8422?token=%s", ip, ws.Token())
+	m.setStatus(fmt.Sprintf("Remote ON: %s", url))
+	return m, nil
+}
+
+func localIP() string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return "localhost"
+	}
+	for _, a := range addrs {
+		if ipnet, ok := a.(*net.IPNet); ok && !ipnet.IP.IsLoopback() && ipnet.IP.To4() != nil {
+			return ipnet.IP.String()
+		}
+	}
+	return "localhost"
 }
 
 func (m *Model) handleBoardNav(key string) (tea.Model, tea.Cmd) {
@@ -1593,7 +1642,7 @@ func (m Model) viewBoard() string {
 		updateVer = m.latestVersion
 	}
 	title := ui.RenderTitle(m.width, len(m.agents), m.columns, updateVer, m.activeWorkspace)
-	footer := ui.RenderFooter(m.width, m.columns, m.updateAvailable && !m.updating)
+	footer := ui.RenderFooter(m.width, m.columns, m.updateAvailable && !m.updating, m.webServer != nil)
 
 	var status string
 	if m.statusMsg != "" && time.Now().Before(m.statusExpires) {
@@ -1634,7 +1683,7 @@ func (m Model) viewCarousel() string {
 		updateVer = m.latestVersion
 	}
 	title := ui.RenderTitle(m.width, len(m.agents), 1, updateVer, m.activeWorkspace)
-	footer := ui.RenderFooter(m.width, 1, m.updateAvailable && !m.updating)
+	footer := ui.RenderFooter(m.width, 1, m.updateAvailable && !m.updating, m.webServer != nil)
 
 	var status string
 	if m.statusMsg != "" && time.Now().Before(m.statusExpires) {
