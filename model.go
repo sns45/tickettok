@@ -423,7 +423,8 @@ func (m *Model) toggleRemote() (tea.Model, tea.Cmd) {
 
 	ip := localIP()
 	url := fmt.Sprintf("http://%s:8422?token=%s", ip, ws.Token())
-	m.setStatus(fmt.Sprintf("Remote ON: %s", url))
+	m.statusMsg = fmt.Sprintf("Remote ON: %s", url)
+	m.statusExpires = time.Now().Add(30 * time.Second)
 	return m, nil
 }
 
