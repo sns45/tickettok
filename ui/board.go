@@ -8,7 +8,8 @@ import (
 )
 
 // RenderBoard renders the kanban board in 2 or 3 column mode.
-func RenderBoard(agents []CardData, selected int, columns int, width, height int) string {
+// scrollOffset and maxVisible control the visible window of cards per column.
+func RenderBoard(agents []CardData, selected int, columns int, width, height, scrollOffset, maxVisible int) string {
 	// Categorize agents
 	var running, waiting, idle []CardData
 	var runIdx, waitIdx, idleIdx []int
@@ -28,12 +29,12 @@ func RenderBoard(agents []CardData, selected int, columns int, width, height int
 	}
 
 	if columns == 2 {
-		return render2Col(agents, running, waiting, idle, runIdx, waitIdx, idleIdx, selected, width, height)
+		return render2Col(agents, running, waiting, idle, runIdx, waitIdx, idleIdx, selected, width, height, scrollOffset, maxVisible)
 	}
-	return render3Col(agents, running, waiting, idle, runIdx, waitIdx, idleIdx, selected, width, height)
+	return render3Col(agents, running, waiting, idle, runIdx, waitIdx, idleIdx, selected, width, height, scrollOffset, maxVisible)
 }
 
-func render3Col(agents []CardData, running, waiting, idle []CardData, runIdx, waitIdx, idleIdx []int, selected, width, height int) string {
+func render3Col(agents []CardData, running, waiting, idle []CardData, runIdx, waitIdx, idleIdx []int, selected, width, height, scrollOffset, maxVisible int) string {
 	colWidth := (width - 6) / 3
 	if colWidth < 20 {
 		colWidth = 20
@@ -50,10 +51,10 @@ func render3Col(agents []CardData, running, waiting, idle []CardData, runIdx, wa
 
 	header := lipgloss.JoinHorizontal(lipgloss.Top, hdrIdle, " ", hdrWait, " ", hdrRun)
 
-	// Cards per column
-	col1 := renderColumnCards(idle, idleIdx, selected, colWidth)
-	col2 := renderColumnCards(waiting, waitIdx, selected, colWidth)
-	col3 := renderColumnCards(running, runIdx, selected, colWidth)
+	// Cards per column (only the visible slice)
+	col1 := renderColumnCards(idle, idleIdx, selected, colWidth, scrollOffset, maxVisible)
+	col2 := renderColumnCards(waiting, waitIdx, selected, colWidth, scrollOffset, maxVisible)
+	col3 := renderColumnCards(running, runIdx, selected, colWidth, scrollOffset, maxVisible)
 
 	if len(idle) == 0 {
 		col1 = lipgloss.NewStyle().Width(colWidth).Foreground(ColorDim).Render("\n  No idle agents")
@@ -70,7 +71,7 @@ func render3Col(agents []CardData, running, waiting, idle []CardData, runIdx, wa
 	return lipgloss.JoinVertical(lipgloss.Left, header, body)
 }
 
-func render2Col(agents []CardData, running, waiting, idle []CardData, runIdx, waitIdx, idleIdx []int, selected, width, height int) string {
+func render2Col(agents []CardData, running, waiting, idle []CardData, runIdx, waitIdx, idleIdx []int, selected, width, height, scrollOffset, maxVisible int) string {
 	colWidth := (width - 4) / 2
 	if colWidth < 25 {
 		colWidth = 25
@@ -92,8 +93,8 @@ func render2Col(agents []CardData, running, waiting, idle []CardData, runIdx, wa
 
 	header := lipgloss.JoinHorizontal(lipgloss.Top, hdrIdle, " ", hdrActive)
 
-	col1 := renderColumnCards(idle, idleIdx, selected, colWidth)
-	col2 := renderColumnCards(active, activeIdx, selected, colWidth)
+	col1 := renderColumnCards(idle, idleIdx, selected, colWidth, scrollOffset, maxVisible)
+	col2 := renderColumnCards(active, activeIdx, selected, colWidth, scrollOffset, maxVisible)
 
 	if len(idle) == 0 {
 		col1 = lipgloss.NewStyle().Width(colWidth).Foreground(ColorDim).Render("\n  No idle agents")
@@ -107,14 +108,25 @@ func render2Col(agents []CardData, running, waiting, idle []CardData, runIdx, wa
 	return lipgloss.JoinVertical(lipgloss.Left, header, body)
 }
 
-func renderColumnCards(cards []CardData, indices []int, selected, width int) string {
+func renderColumnCards(cards []CardData, indices []int, selected, width, scrollOffset, maxVisible int) string {
 	if len(cards) == 0 {
 		return ""
 	}
+	start := scrollOffset
+	if start > len(cards) {
+		start = len(cards)
+	}
+	end := start + maxVisible
+	if end > len(cards) {
+		end = len(cards)
+	}
+	if start >= end {
+		return ""
+	}
 	var rendered []string
-	for i, c := range cards {
-		c.Selected = indices[i] == selected
-		rendered = append(rendered, RenderCard(c, width))
+	for i := start; i < end; i++ {
+		cards[i].Selected = indices[i] == selected
+		rendered = append(rendered, RenderCard(cards[i], width))
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, rendered...)
 }

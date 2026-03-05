@@ -22,6 +22,11 @@ import (
 // Captures the button number in group 1 for scroll handling.
 var sgrMouseRe = regexp.MustCompile(`<(\d+);\d+;\d+[Mm]`)
 
+// estimatedCardHeight is the approximate rendered height of a board card in lines.
+// Cards have: border(2) + header(1) + dir(1) + uptime(1) + sep(1) + preview(1+) + optional title(1).
+// Using 10 as a conservative estimate avoids underscrolling when cards have preview content.
+const estimatedCardHeight = 10
+
 // View modes
 type viewMode int
 
@@ -538,17 +543,8 @@ func (m *Model) columnForStatus(status AgentStatus) int {
 }
 
 // ensureSelectedVisible adjusts scrollOffset so the selected agent's card is on screen.
-// Each card is ~7 lines tall. We keep a margin of 5 lines for title+footer.
 func (m *Model) ensureSelectedVisible() {
-	cardHeight := 7
-	viewportLines := m.height - 5 // title bar + footer + padding
-	if viewportLines < cardHeight {
-		viewportLines = cardHeight
-	}
-	maxVisible := viewportLines / cardHeight
-	if maxVisible < 1 {
-		maxVisible = 1
-	}
+	maxVisible := m.maxVisibleCards()
 
 	// Use visual row (position within column) instead of flat index
 	// so multi-column layouts scroll correctly.
@@ -559,6 +555,21 @@ func (m *Model) ensureSelectedVisible() {
 	} else if row >= m.scrollOffset+maxVisible {
 		m.scrollOffset = row - maxVisible + 1
 	}
+}
+
+// maxVisibleCards returns how many card rows fit in the viewport.
+// Conservative estimate ensures we scroll before cards get cut off.
+func (m *Model) maxVisibleCards() int {
+	// 7 lines of chrome: title bar, blank line, column headers, footer, status, gaps
+	viewportLines := m.height - 7
+	if viewportLines < estimatedCardHeight {
+		viewportLines = estimatedCardHeight
+	}
+	n := viewportLines / estimatedCardHeight
+	if n < 1 {
+		n = 1
+	}
+	return n
 }
 
 // visualRow returns the visual row of agent at flat index idx.
@@ -1600,10 +1611,11 @@ func (m Model) viewBoard() string {
 	}
 
 	cards := m.getCards()
-	board := ui.RenderBoard(cards, m.selected, m.columns, m.width, boardHeight)
+	maxVisible := m.maxVisibleCards()
+	board := ui.RenderBoard(cards, m.selected, m.columns, m.width, boardHeight, m.scrollOffset, maxVisible)
 
-	// Crop board to available height
-	board = cropToHeight(board, boardHeight, m.scrollOffset)
+	// Safety clip: trim any overflow without scroll math
+	board = clipHeight(board, boardHeight)
 
 	content := lipgloss.JoinVertical(lipgloss.Left, title, "", board)
 
@@ -1640,10 +1652,11 @@ func (m Model) viewCarousel() string {
 	}
 
 	cards := m.getCards()
-	carousel := ui.RenderCarousel(cards, m.selected, m.width, m.height)
+	maxVisible := m.maxVisibleCards()
+	carousel := ui.RenderCarousel(cards, m.selected, m.width, m.height, m.scrollOffset, maxVisible)
 
-	// Crop to available height with scroll support
-	carousel = cropToHeight(carousel, carouselHeight, m.scrollOffset)
+	// Safety clip: trim any overflow without scroll math
+	carousel = clipHeight(carousel, carouselHeight)
 
 	content := lipgloss.JoinVertical(lipgloss.Left, title, "", carousel)
 
@@ -2209,19 +2222,14 @@ func (m Model) viewWorkspace() string {
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, rendered)
 }
 
-// cropToHeight takes rendered content and crops it to maxLines,
-// skipping lines proportional to scrollOffset (each card ~7 lines).
-func cropToHeight(content string, maxLines int, scrollOffset int) string {
+// clipHeight trims rendered content to maxLines without any scroll offset math.
+// Used as a safety net after card-level slicing in the renderers.
+func clipHeight(content string, maxLines int) string {
 	lines := strings.Split(content, "\n")
-	skipLines := scrollOffset * 7 // approximate lines per card
-	if skipLines >= len(lines) {
-		skipLines = 0
+	if len(lines) <= maxLines {
+		return content
 	}
-	lines = lines[skipLines:]
-	if len(lines) > maxLines {
-		lines = lines[:maxLines]
-	}
-	return strings.Join(lines, "\n")
+	return strings.Join(lines[:maxLines], "\n")
 }
 
 // buildCardData fetches pane info for all agents (expensive — calls tmux per agent).

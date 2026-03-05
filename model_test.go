@@ -134,44 +134,34 @@ func TestNextInColumn(t *testing.T) {
 	})
 }
 
-func TestCropToHeight(t *testing.T) {
+func TestClipHeight(t *testing.T) {
 	content := strings.Join([]string{
 		"line 0", "line 1", "line 2", "line 3", "line 4",
 		"line 5", "line 6", "line 7", "line 8", "line 9",
 	}, "\n")
 
-	t.Run("basic crop", func(t *testing.T) {
-		got := cropToHeight(content, 3, 0)
+	t.Run("clips to maxLines", func(t *testing.T) {
+		got := clipHeight(content, 3)
 		lines := strings.Split(got, "\n")
 		if len(lines) != 3 {
-			t.Errorf("cropToHeight(maxLines=3) returned %d lines, want 3", len(lines))
+			t.Errorf("clipHeight(3) returned %d lines, want 3", len(lines))
 		}
 		if lines[0] != "line 0" {
 			t.Errorf("first line = %q, want %q", lines[0], "line 0")
 		}
 	})
 
-	t.Run("scrollOffset 0", func(t *testing.T) {
-		got := cropToHeight(content, 5, 0)
-		lines := strings.Split(got, "\n")
-		if lines[0] != "line 0" {
-			t.Errorf("first line with offset=0 = %q, want %q", lines[0], "line 0")
-		}
-	})
-
-	t.Run("large offset clamped", func(t *testing.T) {
-		got := cropToHeight(content, 5, 100)
-		// Large offset should reset to 0
-		lines := strings.Split(got, "\n")
-		if len(lines) == 0 {
-			t.Error("cropToHeight with large offset returned empty")
+	t.Run("no clip when fits", func(t *testing.T) {
+		got := clipHeight(content, 20)
+		if got != content {
+			t.Error("clipHeight should return content unchanged when it fits")
 		}
 	})
 
 	t.Run("empty content", func(t *testing.T) {
-		got := cropToHeight("", 5, 0)
+		got := clipHeight("", 5)
 		if got != "" {
-			t.Errorf("cropToHeight(\"\") = %q, want empty", got)
+			t.Errorf("clipHeight(\"\") = %q, want empty", got)
 		}
 	})
 }
